@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.local-data/
+*.har
+*.log
+.DS_Store
+__pycache__/
+.claude/settings.local.json
