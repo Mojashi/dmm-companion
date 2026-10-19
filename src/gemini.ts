@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { z } from "zod";
-import { command } from "./process";
+import { CommandError, command } from "./process";
 import { atomicJson } from "./store";
 
 /** Unwraps agy's --output-format json envelope into the model's JSON answer. */
@@ -50,20 +50,55 @@ export async function askGemini(request: {
   mkdirSync(request.workDir, { recursive: true, mode: 0o700 });
   const schemaPath = `${request.workDir}/${request.schema.name}.schema.json`;
   atomicJson(schemaPath, z.toJSONSchema(request.schema.shape));
-  return command(
-    [
-      "agy",
-      "-p",
-      request.prompt,
-      "--model",
-      request.model,
-      "--output-format",
-      "json",
-      "--json-schema",
-      schemaPath,
-      "--print-timeout",
-      "15m",
-    ],
-    { cwd: request.workDir, timeout: 16 * 60_000, log: request.log },
-  );
+  const run = () =>
+    command(
+      [
+        "agy",
+        "-p",
+        request.prompt,
+        "--model",
+        request.model,
+        "--output-format",
+        "json",
+        "--json-schema",
+        schemaPath,
+        "--print-timeout",
+        "15m",
+      ],
+      { cwd: request.workDir, timeout: 16 * 60_000, log: request.log },
+    );
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const stdout = await run();
+      // agy can also exit 0 with an ERROR envelope when the connection dropped mid-answer.
+      if (attempt < 4 && transient(errorOf(stdout))) {
+        await Bun.sleep(attempt * 20_000);
+        continue;
+      }
+      return stdout;
+    } catch (error) {
+      if (attempt >= 4 || !transient(error)) throw error;
+      await Bun.sleep(attempt * 20_000);
+    }
+  }
+}
+
+/**
+ * agy failures that say nothing about the request: a dropped connection, or the model list not loading
+ * (agy then rejects even a valid --model). Retried; anything else, quota included, fails at once.
+ */
+function transient(error: unknown): boolean {
+  const text =
+    error instanceof CommandError ? error.stderr + error.stdout : typeof error === "string" ? error : "";
+  return /network issue|dial tcp|invalid model selection|is not recognized as a known model/.test(text);
+}
+
+/** The error text of an agy ERROR envelope, if stdout is one. */
+function errorOf(stdout: string): string {
+  try {
+    const envelope = JSON.parse(stdout) as { status?: string; error?: unknown };
+    return envelope.status === "ERROR" && typeof envelope.error === "string" ? envelope.error : "";
+  } catch {
+    return "";
+  }
 }
