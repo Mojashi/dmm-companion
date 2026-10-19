@@ -7,7 +7,14 @@ import { requireMacNotifications } from "./notifications";
 import { command } from "./process";
 import { atomicJson, hash } from "./store";
 
-export type BackgroundOptions = { root: string; binary: string; model: string; port: number; path: string };
+export type BackgroundOptions = {
+  root: string;
+  binary: string;
+  model: string;
+  transcriptionModel: string;
+  port: number;
+  path: string;
+};
 const xml = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 export const serviceLabel = (root: string) => `com.dmm-companion.auto.${hash(resolve(root)).slice(0, 12)}`;
 
@@ -20,6 +27,8 @@ export function launchAgent(options: BackgroundOptions): string {
     options.root,
     "--model",
     options.model,
+    "--transcribe-model",
+    options.transcriptionModel,
     "--port",
     String(options.port),
   ];

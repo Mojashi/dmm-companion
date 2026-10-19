@@ -76,6 +76,26 @@ export function serve(companion: Companion, port: number, automatic?: AutomaticR
           void companion.sync(body.full === true);
           return Response.json({ ok: true }, { status: 202 });
         }
+        const catchUp = /^\/api\/(measure|assess)$/.exec(url.pathname);
+        if (catchUp?.[1] && request.method === "POST") {
+          if (companion.status.busy)
+            return Response.json({ error: "現在の処理が終わってから計測してください。" }, { status: 409 });
+          const body = (await request.json()) as { ids?: unknown };
+          const ids =
+            body.ids === undefined
+              ? store.library.lessons.map((l) => l.id)
+              : Array.isArray(body.ids) &&
+                  body.ids.every((id) => typeof id === "string" && /^[\w-]+$/.test(id))
+                ? (body.ids as string[])
+                : undefined;
+          if (!ids) return Response.json({ error: "idsが不正です。" }, { status: 400 });
+          void (catchUp[1] === "measure" ? companion.measureAll(ids) : companion.assessAll(ids)).catch(
+            (error) => {
+              companion.status.error = safeError(error);
+            },
+          );
+          return Response.json({ ok: true }, { status: 202 });
+        }
         if (url.pathname === "/api/analyze" && request.method === "POST") {
           const body: unknown = await request.json();
           if (
@@ -87,6 +107,14 @@ export function serve(companion: Companion, port: number, automatic?: AutomaticR
           )
             return Response.json({ error: "idsが不正です。" }, { status: 400 });
           return Response.json({ queued: companion.enqueue(body.ids) }, { status: 202 });
+        }
+        const transcript = /^\/api\/lessons\/([\w-]+)\/transcript$/.exec(url.pathname);
+        if (transcript?.[1] && request.method === "GET") {
+          const file = Bun.file(store.path("analyses", `${store.lesson(transcript[1]).id}.learner.json`));
+          if (!(await file.exists()))
+            return Response.json({ error: "書き起こしがありません。" }, { status: 404 });
+          const saved = (await file.json()) as { transcript: string; model: string };
+          return Response.json({ transcript: saved.transcript, model: saved.model });
         }
         const review = /^\/api\/lessons\/([\w-]+)\/review$/.exec(url.pathname);
         if (review?.[1] && request.method === "POST") {

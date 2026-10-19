@@ -7,7 +7,7 @@ import { AutomaticReviews, readAutomationConfig } from "./automation";
 import { automaticReviewStatus, disableAutomaticReviews, enableAutomaticReviews } from "./background";
 import { Companion } from "./coach";
 import { MacReviewDelivery } from "./delivery";
-import { safeError } from "./domain";
+import { type Lesson, safeError } from "./domain";
 import { disableEmailDelivery, enableEmailDelivery, GmailReviewMail, gwsAccount } from "./email";
 import { importHar } from "./importer";
 import { liveLockHolder } from "./lock";
@@ -25,6 +25,7 @@ const { values, positionals } = parseArgs({
     port: { type: "string", default: "4317" },
     browser: { type: "string" },
     model: { type: "string", default: "gemini-4-argon-high" },
+    "transcribe-model": { type: "string", default: "gemini-3.8-flash-low" },
     "no-open": { type: "boolean" },
     full: { type: "boolean" },
     since: { type: "string" },
@@ -42,6 +43,8 @@ if (values.help) {
   dmm sync                      新しい履歴と録音一覧を同期
   dmm sync --full               全月を取り直す
   dmm analyze [lesson-id... | all]  Geminiで未分析レッスンを振り返る
+  dmm measure [lesson-id... | all]  録音のあるレッスンの発話量・流暢さ・語彙を計測
+  dmm assess [lesson-id... | all]   振り返り済みのレッスンのCEFRの目安を判定
   dmm auto enable              自動生成・Mac通知を有効化（ログイン時に自動起動）
   dmm auto status              自動実行・配信の状態を表示
   dmm auto doctor              Mac通知の許可・表示設定を診断
@@ -53,7 +56,8 @@ if (values.help) {
 
   --data-dir PATH   保存先 (既定: ~/.dmm-companion)
   --port NUMBER     ローカルポート (既定: 4317)
-  --model NAME      Geminiモデル (既定: gemini-4-argon-high)
+  --model NAME      振り返りのGeminiモデル (既定: gemini-4-argon-high)
+  --transcribe-model NAME  発話の書き起こしのGeminiモデル (既定: gemini-3.8-flash-low)
   --browser PATH   setupで使用するGoogle Chromeの実行ファイル
   --no-open        ページを自動で開かない
   --since DATE     自動生成の開始日 (例: 2026-09-01、既定: 初回設定の7日前)
@@ -80,14 +84,26 @@ function reportSavedLogin(root: string): void {
   );
 }
 
+/** Lesson ids given to `dmm measure` / `dmm assess`; none or "all" means every lesson. */
+function measureTargets(): string[] {
+  return positionals.slice(1);
+}
+
 async function main(): Promise<void> {
   let action = positionals[0] ?? "serve";
-  if (!["serve", "background", "auto", "setup", "sync", "analyze", "import-har"].includes(action))
+  if (
+    !["serve", "background", "auto", "setup", "sync", "analyze", "measure", "assess", "import-har"].includes(
+      action,
+    )
+  )
     throw new Error("不明なコマンドです。--helpを確認してください。");
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new Error("portは0〜65535の整数で指定してください。");
   if (!values.model?.startsWith("gemini-")) throw new Error("--modelにGeminiモデルを指定してください。");
+  const transcriptionModel = values["transcribe-model"];
+  if (!transcriptionModel?.startsWith("gemini-"))
+    throw new Error("--transcribe-modelにGeminiモデルを指定してください。");
   if (values.lesson && !/^[\w-]+$/.test(values.lesson)) throw new Error("レッスンIDが不正です。");
   const root = resolve(values["data-dir"] ?? join(homedir(), ".dmm-companion"));
   mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -112,7 +128,7 @@ async function main(): Promise<void> {
       if (values.since && !/^\d{4}-\d{2}-\d{2}$/.test(values.since))
         throw new Error("--sinceはYYYY-MM-DDで指定してください。");
       const config = await enableAutomaticReviews(
-        { root, binary: process.execPath, model: values.model, port },
+        { root, binary: process.execPath, model: values.model, transcriptionModel, port },
         {
           since: values.since ? new Date(`${values.since}T00:00:00+09:00`).toISOString() : undefined,
           intervalMinutes: values.interval ? Number(values.interval) : undefined,
@@ -170,14 +186,24 @@ async function main(): Promise<void> {
         if (!values["no-open"]) openPage(url.href);
         return;
       }
-      if (!["setup", "sync", "auto-run"].includes(action))
+      if (!["setup", "sync", "measure", "assess", "auto-run"].includes(action))
         throw new Error("ページを開いている間の分析は、ページのボタンから実行してください。");
       const identity = action === "setup" ? await promptIdentity() : undefined;
       const headers = { "x-companion-token": url.hash.slice(1), "Content-Type": "application/json" };
       const response = await fetch(`${url.origin}/api/${action === "auto-run" ? "automation/run" : action}`, {
         method: "POST",
         headers,
-        body: JSON.stringify(identity ?? { full: values.full === true }),
+        body: JSON.stringify(
+          identity ??
+            (action === "measure" || action === "assess"
+              ? {
+                  ids:
+                    measureTargets().length && !measureTargets().includes("all")
+                      ? measureTargets()
+                      : undefined,
+                }
+              : { full: values.full === true }),
+        ),
       });
       if (identity) identity.password = "";
       if (!response.ok) throw new Error(((await response.json()) as { error: string }).error);
@@ -213,7 +239,7 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => process.exit(130));
   process.on("SIGTERM", () => process.exit(143));
   const store = new Store(root);
-  const companion = new Companion(store, values.model, new KeychainLogin(root));
+  const companion = new Companion(store, values.model, new KeychainLogin(root), transcriptionModel);
   const automatic = new AutomaticReviews(
     store,
     companion,
@@ -252,6 +278,27 @@ async function main(): Promise<void> {
     await companion.idle();
     const failed = ids.map((id) => store.lesson(id)).filter((l) => l.phase === "error");
     for (const lesson of failed) console.error(`${lesson.teacher}: ${lesson.error}`);
+    if (failed.length) process.exitCode = 1;
+  }
+  if (action === "measure" || action === "assess") {
+    const targets = measureTargets();
+    const ids = !targets.length || targets.includes("all") ? store.library.lessons.map((l) => l.id) : targets;
+    let message = "";
+    const timer = setInterval(() => {
+      if (companion.status.message && companion.status.message !== message) {
+        message = companion.status.message;
+        console.log(message);
+      }
+    }, 500);
+    try {
+      await (action === "measure" ? companion.measureAll(ids) : companion.assessAll(ids));
+    } finally {
+      clearInterval(timer);
+    }
+    const errorOf = (l: Lesson) => (action === "measure" ? l.metricsError : l.assessmentError);
+    const failed = ids.map((id) => store.lesson(id)).filter(errorOf);
+    for (const lesson of failed)
+      console.error(`${lesson.teacher} (${lesson.date.slice(0, 10)}): ${errorOf(lesson)}`);
     if (failed.length) process.exitCode = 1;
   }
   if (action === "auto-run") {

@@ -22,7 +22,9 @@ dmm
 dmm sync                 # 新しい履歴・録音一覧の同期
 dmm sync --full          # 全月を取り直す
 dmm analyze all          # 未分析レッスンを順番に分析
-dmm analyze LESSON_ID    # 1レッスンを分析
+dmm analyze LESSON_ID    # 1レッスンを分析（複数指定可）
+dmm assess all           # 振り返り済みのレッスンのCEFRの目安を判定
+dmm measure all          # 録音のあるレッスンの発話量・流暢さ・語彙を計測
 dmm --no-open            # ブラウザを自動で開かず起動
 dmm --port 4318          # ポート指定
 dmm --data-dir /path/to/data
@@ -75,7 +77,7 @@ dmm auto email me@example.com    # 送信先を指定
 ## 必要なもの
 
 - Google Chrome: DMMのログインフォームと認証用JavaScriptをバックグラウンドで実行します。通常使っているプロファイルは使いません。
-- `agy`: ログイン済みのCLI。`agy -p "…" --model gemini-4-argon-high --output-format json`で分析します。
+- `agy`: ログイン済みのCLI。振り返りとCEFR判定は`--model`（既定 `gemini-4-argon-high`）、発話の書き起こしは`--transcribe-model`（既定 `gemini-3.8-flash-low`）で実行します。
 - `ffmpeg` / `ffprobe`: 話者ごとに分かれた録音の復元と時刻合わせ。
 
 ```sh
@@ -119,6 +121,12 @@ install -m 755 dist/dmm ~/.local/bin/dmm
 
 `agy`の`view_file`は音声をそのままGeminiに渡すため、文法・表現に加えて発音・リズム・イントネーションも振り返ります。Geminiが文字起こししか受け取れなかった場合は画面にその旨を表示し、発音は評価しません。頭出しの時刻はGeminiが音声から特定したおおよその位置です。録音の範囲外の時刻は採用せず、その項目には頭出しボタンを表示しません。元の録音は再生できます。
 
+CEFRの目安は、振り返りとは別にArgonへ録音を聞かせて、話し言葉の6観点（表現の幅・正確さ・流暢さ・やりとり・まとまり・発音）ごとに判定します。観点ごとに根拠となる発話を時刻つきで先に書き出させ、Companion Volumeの記述子の要約と照らしてレベルを決めさせます。1回の会話からの推定なので、成長の記録では直近4回の平均で見ます。
+
+発話の計測は、講師と受講者で分かれた録音トラックを使います。ffmpegの無音検出（0.25秒以上をポーズ）から話した割合・発言の長さを、受講者トラックの逐語書き起こしから話す速さ・途切れずに言えた語数（MLR）・語彙の多様さ（MATTR）・uh/umの頻度を計算します。書き起こしは`analyses/<id>.learner.json`に保存し、再計算ではGeminiを呼び直しません。
+
+音声判定の妥当性は`scripts/benchmarks/`で検証できます（speechocean762の専門家スコアとの相関。`--backend vertex`でVertex AIからも実行可能）。
+
 履歴の同期完了と、録音の取得可否は別々に管理します。録音の保存期限を過ぎたレッスン、未受講のレッスン、録音URLのない古い履歴なども一覧に残します。全月を取得し終えるまでは「全履歴は未確認」と表示します。
 
 DMM側で追加認証・CAPTCHAが要求された場合は、成功扱いにせずエラーにします。ログインフォームや非公開APIが変わった場合は追従が必要です。
@@ -135,6 +143,9 @@ bun run dev -- --no-open
 - `src/dmm.ts`, `src/importer.ts`: 履歴・録音API、月単位の同期
 - `src/audio.ts`: MediaRecorderの断片を復元し、絶対時刻で音声を合成
 - `src/coach.ts`: Gemini分析・キュー・失敗の管理
+- `src/assessment.ts`, `src/cefr.ts`: CEFRの観点別判定
+- `src/metrics.ts`: 発話区間・書き起こしからの発話指標
+- `src/gemini.ts`: agy経由のGemini呼び出しと回答の取り出し
 - `src/store.ts`: 永続化と中断後の復旧
 - `src/server.ts`, `src/web/`: localhost限定のAPIと振り返りページ
 

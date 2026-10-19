@@ -29,7 +29,7 @@ test("ローカルAPIの認証・Origin検証と音声Range配信", async () => 
     reviewed: [],
     audio: { file: "audio/test.mp3", seconds: 1, origin: "2026-01-01" },
   });
-  const { server, url } = serve(new Companion(store, "gemini-test", noSavedLogin), 0);
+  const { server, url } = serve(new Companion(store, "gemini-test", noSavedLogin, "gemini-test"), 0);
   cleanups.push(() => {
     void server.stop(true);
   });

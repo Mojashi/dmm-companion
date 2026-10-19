@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Lesson, Library } from "../domain";
 import { clock, span, timedSegments } from "../timestamps";
+import { LessonAssessment } from "./assessment";
+import { Growth } from "./growth";
+import { LessonSpeaking } from "./speaking";
 import { NativeExamples } from "./youglish";
 
 type ViewLesson = Omit<Lesson, "tracks" | "audio"> & {
@@ -70,7 +73,7 @@ const post = <T,>(path: string, data: unknown) =>
 function App() {
   const [data, setData] = useState<Snapshot>();
   const [selected, setSelected] = useState(new URLSearchParams(location.search).get("lesson") ?? "");
-  const [tab, setTab] = useState<"lessons" | "phrases">("lessons");
+  const [tab, setTab] = useState<"lessons" | "phrases" | "growth">("lessons");
   const [query, setQuery] = useState("");
   const [month, setMonth] = useState("");
   const [error, setError] = useState("");
@@ -281,6 +284,16 @@ function App() {
           >
             <span>⌁</span> 表現ノート <small>{expressionCount}</small>
           </button>
+          <button
+            className={tab === "growth" ? "nav-item active" : "nav-item"}
+            type="button"
+            onClick={() => {
+              setTab("growth");
+              setQuery("");
+            }}
+          >
+            <span>↗</span> 成長の記録 <small>{lessons.filter((l) => l.metrics || l.assessment).length}</small>
+          </button>
         </nav>
         <div className="sidebar-note">
           <span className="small-star">✳</span>
@@ -298,7 +311,8 @@ function App() {
       <main className="workspace">
         <header className="topbar">
           <span>
-            THE CONVERSATION JOURNAL <i>／</i> {tab === "lessons" ? "振り返り" : "表現ノート"}
+            THE CONVERSATION JOURNAL <i>／</i>{" "}
+            {tab === "lessons" ? "振り返り" : tab === "phrases" ? "表現ノート" : "成長の記録"}
           </span>
           <div>
             <button type="button" className="text-button" onClick={() => setHelp(!help)}>
@@ -577,6 +591,18 @@ function App() {
                             ))}
                           </ol>
                         </div>
+                        <LessonAssessment
+                          assessment={lesson.assessment}
+                          error={lesson.assessmentError}
+                          timed={(text) => timed(lesson, text)}
+                        />
+                        <LessonSpeaking
+                          metrics={lesson.metrics}
+                          error={lesson.metricsError}
+                          loadTranscript={() =>
+                            api<{ transcript: string; model: string }>(`/api/lessons/${lesson.id}/transcript`)
+                          }
+                        />
                         <details className="analysis-notes">
                           <summary>分析の補足</summary>
                           <p>{timed(lesson, lesson.feedback.speakerIdentification)}</p>
@@ -644,6 +670,15 @@ function App() {
               </section>
             </div>
           </>
+        ) : tab === "growth" ? (
+          <Growth
+            lessons={lessons}
+            onOpen={(id) => {
+              setSelected(id);
+              setTab("lessons");
+              setQuery("");
+            }}
+          />
         ) : (
           <section className="phrase-section">
             <div className="section-heading">

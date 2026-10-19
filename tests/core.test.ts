@@ -161,13 +161,18 @@ describe("HAR and DMM protocol", () => {
     db.saveCredentials({ dmmCookie: "session=expired" });
     globalThis.fetch = mock(async () => new Response("", { status: 302 })) as unknown as typeof fetch;
     let forgotten = false;
-    const companion = new Companion(db, "gemini-test", {
-      ...noSavedLogin,
-      available: true,
-      forget: async () => {
-        forgotten = true;
+    const companion = new Companion(
+      db,
+      "gemini-test",
+      {
+        ...noSavedLogin,
+        available: true,
+        forget: async () => {
+          forgotten = true;
+        },
       },
-    });
+      "gemini-test",
+    );
     await companion.sync();
     expect(companion.status.error).toContain("dmm setup");
     expect(forgotten).toBe(false);
@@ -260,7 +265,7 @@ describe("Audio and coaching", () => {
     const db = store();
     db.merge(lesson("first"));
     db.merge(lesson("second"));
-    const companion = new Companion(db, "gemini-test", noSavedLogin);
+    const companion = new Companion(db, "gemini-test", noSavedLogin, "gemini-test");
     expect(companion.enqueue(["first", "first", "second"])).toBe(2);
     await companion.idle();
     expect(db.library.lessons.map((l) => l.phase)).toEqual(["error", "error"]);

@@ -273,9 +273,11 @@ test("launchd設定は絶対パスとPATHを保存し、XML特殊文字を正し
     binary: "/Users/a & b/dmm",
     path: "/opt/homebrew/bin:/bin",
     model: "gemini-test",
+    transcriptionModel: "gemini-flash-test",
     port: 4317,
   };
   const plist = launchAgent(options);
+  expect(plist).toContain("<string>--transcribe-model</string><string>gemini-flash-test</string>");
   expect(plist).toContain("/Users/a &amp; b/dmm");
   expect(plist).toContain("<key>KeepAlive</key><true/>");
   expect(plist).toContain("<string>background</string>");

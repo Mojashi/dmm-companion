@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Assessment } from "./assessment";
 
 export const feedbackSchema = z.object({
   source: z.enum(["native_audio", "audio_transcript"]),
@@ -25,6 +26,29 @@ export const feedbackSchema = z.object({
   uncertainties: z.array(z.string()),
 });
 export type Feedback = z.infer<typeof feedbackSchema>;
+/** How the learner spoke in one lesson, computed from the per-speaker tracks and a verbatim transcript. */
+export type SpeakingMetrics = {
+  version: 1;
+  /** Seconds of voice (pauses of 0.25s or more excluded). */
+  learnerSeconds: number;
+  teacherSeconds: number;
+  /** learnerSeconds / (learnerSeconds + teacherSeconds). */
+  talkShare: number;
+  /** Times the learner took the floor; back-channels over the teacher do not count. */
+  turns: number;
+  meanTurnSeconds: number;
+  /** Words excluding fillers (uh, um, …). */
+  words: number;
+  /** Words per minute of the learner's voiced time. */
+  wordsPerMinute: number;
+  /** Mean words between pauses (MLR). */
+  meanLengthOfRun: number;
+  fillersPerMinute: number;
+  /** Moving-average type-token ratio over 50-word windows; null under 50 words. */
+  mattr: number | null;
+  measuredAt: string;
+  model: string;
+};
 export type Phase = "idle" | "queued" | "downloading" | "listening" | "done" | "error";
 export type Track = {
   id: string;
@@ -47,6 +71,13 @@ export type Lesson = {
   error?: string;
   audio?: { file: string; seconds: number; origin: string };
   feedback?: Feedback;
+  metrics?: SpeakingMetrics;
+  /** Why measuring failed; the review itself is unaffected. */
+  metricsError?: string;
+  /** CEFR estimate per qualitative aspect, judged from the lesson audio. */
+  assessment?: Assessment & { model: string; assessedAt: string };
+  /** Why judging the CEFR estimate failed; the review itself is unaffected. */
+  assessmentError?: string;
   analyzedAt?: string;
   recordingCheckedAt?: string;
   recordingUnavailable?: boolean;
