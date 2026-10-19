@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { cefrLevels, cefrScore } from "../cefr";
+import { cefrLevels, cefrPeriods, cefrScore } from "../cefr";
 import type { Lesson, SpeakingMetrics } from "../domain";
 
 type Measured = Pick<Lesson, "id" | "date" | "teacher" | "metrics" | "assessment">;
@@ -194,6 +194,81 @@ function Tile({
   );
 }
 
+const aspectLabel: Record<string, string> = {
+  range: "表現の幅",
+  accuracy: "正確さ",
+  fluency: "流暢さ",
+  interaction: "やりとり",
+  coherence: "まとまり",
+  phonology: "発音",
+};
+/** Lessons per period: enough judgements that one lesson's topic does not decide the level. */
+const periodSize = 10;
+
+/** The CEFR estimate averaged over every 10 judged lessons, newest period last. */
+function Periods({ lessons }: { lessons: Measured[] }) {
+  const periods = cefrPeriods(
+    lessons.flatMap((l) =>
+      l.assessment
+        ? [
+            {
+              date: l.date,
+              overall: l.assessment.overall.level,
+              aspects: Object.fromEntries(l.assessment.criteria.map((c) => [c.criterion, c.level])),
+            },
+          ]
+        : [],
+    ),
+    periodSize,
+  );
+  if (!periods.length) return null;
+  const aspects = Object.keys(periods.at(-1)?.aspects ?? {});
+  return (
+    <div className="growth-periods">
+      <h3>
+        {periodSize}回ごとのCEFRの目安 <span>各レッスンの判定を平均したもの</span>
+      </h3>
+      <div className="growth-table-wrap">
+        <table className="growth-table">
+          <thead>
+            <tr>
+              <th>期間</th>
+              <th>回数</th>
+              <th>総合</th>
+              {aspects.map((a) => (
+                <th key={a}>{aspectLabel[a] ?? a}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {[...periods].reverse().map((p, i, all) => {
+              const previous = all[i + 1];
+              const change = previous ? p.overall - previous.overall : 0;
+              return (
+                <tr key={p.from}>
+                  <td>
+                    {day(p.from)}〜{day(p.to)}
+                  </td>
+                  <td>{p.count}</td>
+                  <td>
+                    {cefrLabel(p.overall)}
+                    {Math.abs(change) >= 0.25 && (
+                      <span className="growth-delta">{change > 0 ? " ↗" : " ↘"}</span>
+                    )}
+                  </td>
+                  {aspects.map((a) => (
+                    <td key={a}>{p.aspects[a] === undefined ? "—" : cefrLabel(p.aspects[a])}</td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function Growth({
   lessons,
   onOpen,
@@ -222,6 +297,7 @@ export function Growth({
               <Tile key={m.key} lessons={measured} measure={m} onOpen={onOpen} />
             ))}
           </div>
+          <Periods lessons={measured} />
           <p className="growth-caveat">
             話題や教材で1回ごとの値は大きく動きます。平均の線の向きで見てください。点を押すとそのレッスンを開きます。
             {failed ? ` 計測できなかったレッスンが${failed}件あります。` : ""}

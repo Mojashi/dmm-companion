@@ -229,6 +229,7 @@ export class Companion {
   private async assess(lesson: Lesson): Promise<void> {
     this.status.message = `${lesson.teacher}先生とのレッスンのCEFRを判定中`;
     try {
+      if (!lesson.audio) await this.signedIn(() => prepareAudio(this.store, lesson));
       await assessSpeaking(this.store, lesson, this.model);
     } catch (error) {
       lesson.assessmentError = safeError(error);
@@ -243,11 +244,11 @@ export class Companion {
       (lesson) => this.measure(lesson),
     );
   }
-  /** Judges the CEFR estimate for reviewed lessons that do not have one yet. */
+  /** Judges the CEFR estimate for recorded lessons that do not have one yet, restoring audio as needed. */
   async assessAll(ids: string[]): Promise<void> {
     await this.catchUp(
       "CEFRを判定中",
-      ids.map((id) => this.store.lesson(id)).filter((l) => l.feedback && l.audio && !l.assessment),
+      ids.map((id) => this.store.lesson(id)).filter((l) => l.attended && l.tracks.length && !l.assessment),
       (lesson) => this.assess(lesson),
     );
   }

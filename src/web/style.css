@@ -1529,3 +1529,21 @@ footer {
   font-size: 9px;
   color: #a2aa92;
 }
+
+.growth-periods {
+  margin: 26px 0 8px;
+}
+.growth-periods h3 {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 10px;
+}
+.growth-periods h3 span {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 8px;
+}
+.growth-delta {
+  color: var(--accent);
+}

@@ -44,7 +44,7 @@ if (values.help) {
   dmm sync --full               全月を取り直す
   dmm analyze [lesson-id... | all]  Geminiで未分析レッスンを振り返る
   dmm measure [lesson-id... | all]  録音のあるレッスンの発話量・流暢さ・語彙を計測
-  dmm assess [lesson-id... | all]   振り返り済みのレッスンのCEFRの目安を判定
+  dmm assess [lesson-id... | all]   録音のあるレッスンのCEFRの目安を判定
   dmm auto enable              自動生成・Mac通知を有効化（ログイン時に自動起動）
   dmm auto status              自動実行・配信の状態を表示
   dmm auto doctor              Mac通知の許可・表示設定を診断

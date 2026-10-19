@@ -13,3 +13,37 @@ export const cefrScore: Record<CefrLevel, number> = {
   C1: 5,
   C2: 6,
 };
+
+export type Assessed = { date: string; overall: CefrLevel; aspects: Record<string, CefrLevel> };
+export type Period = {
+  from: string;
+  to: string;
+  count: number;
+  overall: number;
+  aspects: Record<string, number>;
+};
+
+/**
+ * Groups judged lessons into periods of `size` lessons and averages each level on the numeric scale.
+ * One lesson's estimate swings with the topic; an average over several is the steadier reading.
+ * Periods are cut from the newest lesson backwards, so only the oldest period may be short.
+ */
+export function cefrPeriods(assessed: Assessed[], size: number): Period[] {
+  const sorted = [...assessed].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+  const periods: Period[] = [];
+  for (let end = sorted.length; end > 0; end -= size) {
+    const group = sorted.slice(Math.max(0, end - size), end);
+    const mean = (levels: CefrLevel[]) => levels.reduce((s, l) => s + cefrScore[l], 0) / levels.length;
+    const names = Object.keys(group[0]?.aspects ?? {});
+    periods.unshift({
+      from: group[0]?.date ?? "",
+      to: group.at(-1)?.date ?? "",
+      count: group.length,
+      overall: mean(group.map((g) => g.overall)),
+      aspects: Object.fromEntries(
+        names.map((n) => [n, mean(group.flatMap((g) => (g.aspects[n] ? [g.aspects[n]] : [])))]),
+      ),
+    });
+  }
+  return periods;
+}

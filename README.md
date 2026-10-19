@@ -23,7 +23,7 @@ dmm sync                 # 新しい履歴・録音一覧の同期
 dmm sync --full          # 全月を取り直す
 dmm analyze all          # 未分析レッスンを順番に分析
 dmm analyze LESSON_ID    # 1レッスンを分析（複数指定可）
-dmm assess all           # 振り返り済みのレッスンのCEFRの目安を判定
+dmm assess all           # 録音のあるレッスンのCEFRの目安を判定
 dmm measure all          # 録音のあるレッスンの発話量・流暢さ・語彙を計測
 dmm --no-open            # ブラウザを自動で開かず起動
 dmm --port 4318          # ポート指定
