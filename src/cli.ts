@@ -12,9 +12,10 @@ import { disableEmailDelivery, enableEmailDelivery, GmailReviewMail, gwsAccount 
 import { importHar } from "./importer";
 import { liveLockHolder } from "./lock";
 import { diagnoseMacNotifications } from "./notifications";
-import { promptIdentity } from "./prompt";
+import { hiddenInput, promptIdentity } from "./prompt";
 import { KeychainLogin } from "./saved-login";
 import { serve } from "./server";
+import { disableSlackDelivery, enableSlackDelivery, SlackReviewPost } from "./slack";
 import { atomicJson, Store } from "./store";
 
 const { values, positionals } = parseArgs({
@@ -51,6 +52,8 @@ if (values.help) {
   dmm auto run                 今すぐ自動振り返りを実行
   dmm auto email [ADDRESS]     完成した振り返りをgwsのGmailからメールでも送る
   dmm auto email off           メール配信を停止
+  dmm auto slack               完成した振り返りをSlackのIncoming Webhookにも投稿 (URLは非表示で入力)
+  dmm auto slack off           Slack配信を停止
   dmm auto disable             自動生成・通知を停止
 
   --data-dir PATH   保存先 (既定: ~/.dmm-companion)
@@ -149,6 +152,17 @@ async function main(): Promise<void> {
       );
       return;
     }
+    if (operation === "slack") {
+      if (positionals[2] === "off") {
+        disableSlackDelivery(root);
+        console.log("Slack配信を停止しました。Mac通知は引き続き届きます。");
+        return;
+      }
+      // The webhook URL is a credential, so it is typed in rather than left in shell history.
+      await enableSlackDelivery(root, (await hiddenInput("SlackのIncoming WebhookのURL: ")).trim());
+      console.log("Slackにテスト投稿しました。これ以降に完成した振り返りをSlackにも投稿します。");
+      return;
+    }
     if (operation === "disable") {
       await disableAutomaticReviews(root);
       console.log("自動振り返りを停止しました。");
@@ -159,7 +173,9 @@ async function main(): Promise<void> {
       return;
     }
     if (operation !== "run")
-      throw new Error("auto enable / disable / status / run / doctor / test / emailを指定してください。");
+      throw new Error(
+        "auto enable / disable / status / run / doctor / test / email / slackを指定してください。",
+      );
     action = "auto-run";
   }
   const lock = join(root, "app.lock");
@@ -238,12 +254,10 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => process.exit(143));
   const store = new Store(root);
   const companion = new Companion(store, values.model, new KeychainLogin(root), transcriptionModel);
-  const automatic = new AutomaticReviews(
-    store,
-    companion,
-    new MacReviewDelivery(store, process.execPath),
+  const automatic = new AutomaticReviews(store, companion, new MacReviewDelivery(store, process.execPath), [
     new GmailReviewMail(store),
-  );
+    new SlackReviewPost(store),
+  ]);
   if (action === "import-har") {
     if (positionals.length < 2) throw new Error("開発用のHARファイルを指定してください。");
     for (const path of positionals.slice(1))

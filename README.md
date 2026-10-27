@@ -70,6 +70,17 @@ dmm auto email me@example.com    # 送信先を指定
 
 メールで送るのは、設定より後に通知した振り返りです。設定前に通知済みの分はさかのぼって送りません。通知とメールは別々に送信済みを記録するので、メールの失敗で通知が重複することも、その逆もありません。メールの失敗は通知と同じ間隔で再試行し、Mac通知と`dmm auto status`でエラーを確認できます。起動中のバックグラウンドプロセスにも次回の確認から反映されます。バックグラウンドは`dmm auto enable`時のPATHで`gws`を探すので、gwsを後から入れた場合は`dmm auto enable`を再実行してください。
 
+### Slack配信
+
+`dmm auto slack`で、振り返りの要点（題名・要点・今日の重点3つ・次のレッスンで使う）をSlackにも投稿します。Slack側で[Incoming Webhook](https://api.slack.com/messaging/webhooks)を作成し、投稿先チャンネルのWebhook URLを入力してください。URLは投稿の権限そのものなので、シェル履歴に残らないよう非表示で入力し、`slack.json`（`0600`）に保存します。`dmm auto status`にもURLは表示しません。
+
+```sh
+dmm auto slack       # Webhook URLを入力 → テスト投稿 → 成功したら保存
+dmm auto slack off   # Slack配信を停止する
+```
+
+メールと同じく、設定より後に通知した振り返りだけを投稿し、Mac通知・メール・Slackはそれぞれ別に送信済みを記録・再試行します。振り返りの文中の`<` `&` `>`はエスケープするので、`<!channel>`のようなメンションやリンクにはなりません。
+
 分析と配信の進捗は別々に保存します。配信失敗時にGemini分析をやり直すことはありません。通信失敗・録音未公開時は10分から最大24時間の間隔で再試行します。送信済みと記録した振り返りは再送せず、Mac通知のIDもレッスンごとに固定して同じ通知の重複表示を抑えます。資格情報の期限切れなどはMac通知と`dmm auto status`で確認でき、`dmm setup`で再ログインできます。
 
 設定は`automation.json`、確認・生成・配信の記録は`automation-state.json`、ログは`logs/`です。LaunchAgentは`~/Library/LaunchAgents/com.dmm-companion.auto.<保存先の識別子>.plist`に登録します。実行ファイルの絶対パスと設定時のPATHを保存するので、バイナリの場所や外部ツールの配置を変えたときは`dmm auto enable`を再実行してください。

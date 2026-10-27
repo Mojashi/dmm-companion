@@ -1,14 +1,6 @@
 import type { ReactNode } from "react";
+import { aspectLabel } from "../cefr";
 import type { Lesson } from "../domain";
-
-const aspectLabel = {
-  range: "表現の幅",
-  accuracy: "正確さ",
-  fluency: "流暢さ",
-  interaction: "やりとり",
-  coherence: "まとまり",
-  phonology: "発音",
-} as const;
 
 /** The lesson's CEFR estimate per aspect: the level, then the evidence it rests on and the next step. */
 export function LessonAssessment({

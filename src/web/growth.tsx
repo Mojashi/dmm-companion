@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { aspectMean, type CefrLevel, cefrLevels, cefrPeriods, cefrScore } from "../cefr";
+import { aspectLabel, aspectMean, type CefrLevel, cefrLevels, cefrPeriods, cefrScore } from "../cefr";
 import type { Lesson, SpeakingMetrics } from "../domain";
 
 type Measured = Pick<Lesson, "id" | "date" | "teacher" | "metrics" | "assessment">;
@@ -194,14 +194,6 @@ function Tile({
   );
 }
 
-const aspectLabel: Record<string, string> = {
-  range: "表現の幅",
-  accuracy: "正確さ",
-  fluency: "流暢さ",
-  interaction: "やりとり",
-  coherence: "まとまり",
-  phonology: "発音",
-};
 /** Lessons per period: enough judgements that one lesson's topic does not decide the level. */
 const periodSize = 10;
 

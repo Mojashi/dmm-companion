@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import type { ReviewChannel } from "./automation";
 import type { Lesson } from "./domain";
 import { reviewEmailHtml } from "./email-html";
 import { command } from "./process";
@@ -65,14 +66,10 @@ export function disableEmailDelivery(root: string): void {
   rmSync(settingsPath(root), { force: true });
 }
 
-export type ReviewMail = {
-  /** When email delivery was turned on, or undefined while it is off. */
-  enabledAt(): string | undefined;
-  send(lesson: Lesson): Promise<void>;
-};
-
 /** Reads the settings on every use, so `dmm auto email` takes effect in a running background process. */
-export class GmailReviewMail implements ReviewMail {
+export class GmailReviewMail implements ReviewChannel {
+  readonly key = "email";
+  readonly label = "振り返りのメール送信";
   constructor(private readonly store: Pick<Store, "root">) {}
   enabledAt() {
     return readEmailSettings(this.store.root)?.enabledAt;

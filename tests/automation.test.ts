@@ -91,12 +91,23 @@ function context() {
   };
   const mailed: string[] = [];
   const mail = {
+    key: "email" as const,
+    label: "振り返りのメール送信",
     enabledAt: (): string | undefined => undefined,
     send: async (l: Lesson) => {
       mailed.push(l.id);
     },
   };
-  const automatic = () => new AutomaticReviews(store, worker, delivery, mail, () => now);
+  const posted: string[] = [];
+  const slack = {
+    key: "slack" as const,
+    label: "振り返りのSlack投稿",
+    enabledAt: (): string | undefined => undefined,
+    send: async (l: Lesson) => {
+      posted.push(l.id);
+    },
+  };
+  const automatic = () => new AutomaticReviews(store, worker, delivery, [mail, slack], () => now);
   return {
     store,
     worker,
@@ -106,6 +117,8 @@ function context() {
     alerts,
     mail,
     mailed,
+    slack,
+    posted,
     automatic,
     advance: (minutes: number) => {
       now += minutes * 60_000;
@@ -242,6 +255,31 @@ test("メール配信を有効にする前に通知済みの振り返りはメ�
   expect(c.delivered).toEqual(["before", "after"]);
   expect(c.mailed).toEqual(["after"]);
   expect(auto.state.jobs.before?.email).toBeUndefined();
+});
+
+test("Slack投稿はメールと別に記録し、Slackの失敗でメールを再送しない", async () => {
+  const c = context();
+  c.mail.enabledAt = () => "2026-09-12T00:00:00.000Z";
+  c.slack.enabledAt = () => "2026-09-12T00:00:00.000Z";
+  c.store.merge(lesson("ready"));
+  let fail = true;
+  c.slack.send = async (l) => {
+    c.posted.push(l.id);
+    if (fail) throw new Error("no_service");
+  };
+  await c.automatic().run();
+  expect(c.mailed).toEqual(["ready"]);
+  expect(c.posted).toEqual(["ready"]);
+  expect(c.alerts).toEqual(["振り返りのSlack投稿: no_service"]);
+  fail = false;
+  c.advance(11);
+  const restarted = c.automatic();
+  await restarted.run();
+  expect(c.delivered).toEqual(["ready"]);
+  expect(c.mailed).toEqual(["ready"]);
+  expect(c.posted).toEqual(["ready", "ready"]);
+  expect(restarted.state.jobs.ready?.slack?.deliveredAt).toBeDefined();
+  expect(restarted.state.error).toBeUndefined();
 });
 
 test("通知のクリックで指定レッスンを開き、パス中のシェル構文を実行させない", async () => {

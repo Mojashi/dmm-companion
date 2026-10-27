@@ -5,6 +5,7 @@ import { type AutomationConfig, automationConfigSchema, readAutomationConfig } f
 import { readEmailSettings } from "./email";
 import { requireMacNotifications } from "./notifications";
 import { command } from "./process";
+import { readSlackSettings } from "./slack";
 import { atomicJson, hash } from "./store";
 
 export type BackgroundOptions = {
@@ -129,9 +130,12 @@ export async function disableAutomaticReviews(root: string): Promise<void> {
 
 export function automaticReviewStatus(root: string): unknown {
   const statePath = join(root, "automation-state.json");
+  const slack = readSlackSettings(root);
   return {
     config: readAutomationConfig(join(root, "automation.json")) ?? { enabled: false },
     email: readEmailSettings(root) ?? { enabled: false },
+    // The webhook URL is a credential and is not printed.
+    slack: slack ? { enabled: true, enabledAt: slack.enabledAt } : { enabled: false },
     state: existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : null,
   };
 }

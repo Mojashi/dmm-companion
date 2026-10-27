@@ -19,6 +19,15 @@ export function aspectMean(aspects: CefrLevel[]): number | null {
   return aspects.length ? aspects.reduce((s, l) => s + cefrScore[l], 0) / aspects.length : null;
 }
 
+export const aspectLabel: Record<string, string> = {
+  range: "表現の幅",
+  accuracy: "正確さ",
+  fluency: "流暢さ",
+  interaction: "やりとり",
+  coherence: "まとまり",
+  phonology: "発音",
+};
+
 export type Assessed = { date: string; overall: CefrLevel; aspects: Record<string, CefrLevel> };
 export type Period = {
   from: string;

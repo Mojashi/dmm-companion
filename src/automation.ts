@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { z } from "zod";
 import type { Companion } from "./coach";
 import { type Lesson, safeError } from "./domain";
-import type { ReviewMail } from "./email";
 import { atomicJson, type Store } from "./store";
 
 export const automationConfigSchema = z.object({
@@ -17,11 +16,20 @@ export const automationConfigSchema = z.object({
 export type AutomationConfig = z.infer<typeof automationConfigSchema>;
 type Attempt = { attempts: number; retryAt?: string; error?: string };
 type DeliveryAttempt = Attempt & { deliveredAt?: string };
+/** A destination that also receives each review, besides the Mac notification, once it is turned on. */
+export type ReviewChannel = {
+  /** The key its delivery record is saved under in automation-state.json. */
+  readonly key: "email" | "slack";
+  /** Names the step in errors, e.g. "振り返りのメール送信". */
+  readonly label: string;
+  /** When the channel was turned on, or undefined while it is off. */
+  enabledAt(): string | undefined;
+  send(lesson: Lesson): Promise<void>;
+};
 type ReviewJob = {
   analysis: Attempt;
   delivery: DeliveryAttempt & { file?: string };
-  email?: DeliveryAttempt;
-};
+} & Partial<Record<ReviewChannel["key"], DeliveryAttempt>>;
 export type AutomationState = {
   version: 1;
   lastCheckedAt?: string;
@@ -58,7 +66,7 @@ export class AutomaticReviews {
     private readonly store: Store,
     private readonly worker: AutomationWorker,
     private readonly delivery: ReviewDelivery,
-    private readonly mail: ReviewMail,
+    private readonly channels: ReviewChannel[],
     private readonly now = Date.now,
   ) {
     this.state = existsSync(store.path("automation-state.json"))
@@ -144,19 +152,21 @@ export class AutomaticReviews {
         attempt.file = (await this.delivery.deliver(lesson)).file;
       },
     );
-    const emailSince = this.mail.enabledAt();
-    if (emailSince)
+    for (const channel of this.channels) {
+      const since = channel.enabledAt();
+      if (!since) continue;
       await this.deliverEach(
         config,
-        "振り返りのメール送信",
+        channel.label,
         (job) => {
-          job.email ??= { attempts: 0 };
-          return job.email;
+          job[channel.key] ??= { attempts: 0 };
+          return job[channel.key] as DeliveryAttempt;
         },
-        (lesson) => this.mail.send(lesson),
-        // Reviews already notified before email was turned on are not mailed retroactively.
-        (job) => !(job.delivery.deliveredAt && job.delivery.deliveredAt < emailSince),
+        (lesson) => channel.send(lesson),
+        // Reviews already notified before the channel was turned on are not sent retroactively.
+        (job) => !(job.delivery.deliveredAt && job.delivery.deliveredAt < since),
       );
+    }
   }
   private async deliverEach<T extends DeliveryAttempt>(
     config: AutomationConfig,
@@ -203,8 +213,11 @@ export class AutomaticReviews {
           this.state.error = `振り返りの配信: ${job.delivery.error}`;
           break;
         }
-        if (this.mail.enabledAt() && !job?.email?.deliveredAt && job?.email?.error) {
-          this.state.error = `振り返りのメール送信: ${job.email.error}`;
+        const failed = this.channels.find(
+          (c) => c.enabledAt() && !job?.[c.key]?.deliveredAt && job?.[c.key]?.error,
+        );
+        if (failed) {
+          this.state.error = `${failed.label}: ${job?.[failed.key]?.error}`;
           break;
         }
       }
