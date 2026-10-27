@@ -86,14 +86,14 @@ export class Companion {
     /** Transcribes the learner's voice verbatim for speaking metrics; a fast model is enough. */
     readonly transcriptionModel: string,
   ) {}
-  async setup(identity: LoginIdentity, browser?: string): Promise<void> {
+  async setup(identity: LoginIdentity): Promise<void> {
     if (this.working) throw new Error("現在の処理が終わってからログインしてください。");
     this.working = true;
     this.status = { busy: true, message: "DMMにログインしています", error: "" };
     // setupLogin wipes identity.password, so keep it only until it has proven valid.
     const verified = { ...identity };
     try {
-      await setupLogin(this.store, this.report, identity, { browser });
+      await setupLogin(this.store, this.report, identity);
       if (this.savedLogin.available) await this.savedLogin.remember(verified);
     } catch (error) {
       this.status.error = safeError(error);

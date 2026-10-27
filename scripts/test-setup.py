@@ -58,7 +58,6 @@ def verify_session(root):
         assert "data" in json.load(response), "録音APIの応答が不正"
     assert "password" not in credentials, "パスワードが保存されています"
     assert (root / "credentials.json").stat().st_mode & 0o777 == 0o600
-    assert not list((root / "login-browser").glob("attempt-*")), "認証プロファイルが残っています"
     return credentials["savedAt"]
 
 
@@ -91,7 +90,6 @@ def run_setup(binary, root, identity):
         "sessionSavedAt": verify_session(root),
         "historyAuthenticated": True,
         "recordingApiAuthenticated": True,
-        "profileRemoved": True,
     }
 
 

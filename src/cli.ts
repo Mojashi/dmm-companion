@@ -23,7 +23,6 @@ const { values, positionals } = parseArgs({
   options: {
     "data-dir": { type: "string" },
     port: { type: "string", default: "4317" },
-    browser: { type: "string" },
     model: { type: "string", default: "gemini-3.8-flash-high" },
     "transcribe-model": { type: "string", default: "gemini-3.8-flash-low" },
     "no-open": { type: "boolean" },
@@ -58,14 +57,13 @@ if (values.help) {
   --port NUMBER     ローカルポート (既定: 4317)
   --model NAME      振り返り・CEFR判定のGeminiモデル (既定: gemini-3.8-flash-high)
   --transcribe-model NAME  発話の書き起こしのGeminiモデル (既定: gemini-3.8-flash-low)
-  --browser PATH   setupで使用するGoogle Chromeの実行ファイル
   --no-open        ページを自動で開かない
   --since DATE     自動生成の開始日 (例: 2026-09-01、既定: 初回設定の7日前)
   --interval N     自動確認の間隔 (分、既定: 10)
   --lesson ID      指定したレッスンの振り返りを開く
 
 初回: dmm setup → メールアドレス・パスワードを入力 → dmm
-必要な外部ツール: Google Chrome (バックグラウンドの認証処理)、agy、ffmpeg (分析)
+必要な外部ツール: agy、ffmpeg (分析)
 アプリとブラウザUIはこのバイナリに同梱されています。`);
   process.exit(0);
 }
@@ -260,7 +258,7 @@ async function main(): Promise<void> {
       }
     }, 500);
     try {
-      if (action === "setup") await companion.setup(await promptIdentity(), values.browser);
+      if (action === "setup") await companion.setup(await promptIdentity());
       else await companion.sync(values.full === true);
     } finally {
       clearInterval(timer);

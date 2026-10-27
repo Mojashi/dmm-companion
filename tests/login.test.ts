@@ -1,37 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { Credentials } from "../src/domain";
-import { captureApiHeaders, cookieHeader, withFreshLoginProfile } from "../src/login";
-
-test("setupの再実行・失敗後も前回のブラウザセッションを引き継がない", async () => {
-  const root = mkdtempSync(join(tmpdir(), "dmm-login-"));
-  try {
-    mkdirSync(join(root, "Default"));
-    writeFileSync(join(root, "Default", "Cookies"), "previous signed-in session");
-    let previous = "";
-    await expect(
-      withFreshLoginProfile(root, async (profile) => {
-        previous = profile;
-        expect(existsSync(join(profile, "Default", "Cookies"))).toBe(false);
-        mkdirSync(join(profile, "Default"));
-        writeFileSync(join(profile, "Default", "Cookies"), "new session");
-        throw new Error("authentication failed");
-      }),
-    ).rejects.toThrow("authentication failed");
-    expect(existsSync(previous)).toBe(false);
-    await withFreshLoginProfile(root, async (profile) => {
-      expect(profile).not.toBe(previous);
-      expect(existsSync(join(profile, "Default", "Cookies"))).toBe(false);
-      previous = profile;
-    });
-    expect(existsSync(previous)).toBe(false);
-    expect(existsSync(join(root, "Default", "Cookies"))).toBe(true);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+import { cookieHeader, LoginSession, loginErrors, passwordForm } from "../src/login";
 
 test("Cookieをドメイン・パス・期限・HTTPSで絞り込む", () => {
   const base = { value: "test", domain: ".dmm.com", path: "/", secure: true, expires: 200 };
@@ -50,20 +18,45 @@ test("Cookieをドメイン・パス・期限・HTTPSで絞り込む", () => {
   expect(cookieHeader(cookies, "http://eikaiwa.dmm.com/lesson/", 100)).toBe("");
 });
 
-test("DMM英会話API以外の認証ヘッダーを保存しない", () => {
-  const credentials: Credentials = {};
-  captureApiHeaders("https://attacker.test/", { Authorization: "Bearer wrong" }, credentials);
-  expect(credentials).toEqual({});
-  captureApiHeaders(
-    "https://api.engoo.com/api/oauth/token",
-    { Authorization: "Basic not-a-session" },
-    credentials,
+test("ログイン中のSet-Cookieをドメイン付きで保持し、期限切れで削除する", () => {
+  const session = new LoginSession();
+  const now = Date.now() / 1000;
+  session.receive(
+    "login_session_id=abc; Domain=.dmm.com; Path=/; Secure; HttpOnly",
+    "https://accounts.dmm.com/x",
+    now,
   );
-  expect(credentials).toEqual({});
-  captureApiHeaders(
-    "https://api.engoo.com/api/users/current",
-    { Authorization: "Bearer session", "X-Viewmodel-Versions": "versions", Cookie: "ignored" },
-    credentials,
-  );
-  expect(credentials).toEqual({ bearer: "Bearer session", viewmodel: "versions" });
+  session.receive("host_only=1; Path=/", "https://accounts.dmm.com/x", now);
+  session.receive("short=1; Max-Age=60; Path=/", "https://accounts.dmm.com/x", now);
+  expect(session.header("https://eikaiwa.dmm.com/lesson/")).toBe("login_session_id=abc");
+  expect(session.has("login_session_id", "https://eikaiwa.dmm.com/lesson/")).toBe(true);
+  expect(session.header("https://accounts.dmm.com/")).toBe("login_session_id=abc; host_only=1; short=1");
+  session.receive("login_session_id=; Domain=dmm.com; Path=/; Max-Age=0", "https://www.dmm.com/", now);
+  expect(session.has("login_session_id", "https://eikaiwa.dmm.com/lesson/")).toBe(false);
+});
+
+test("別ドメイン宛てのCookieは受け取らない", () => {
+  const session = new LoginSession();
+  session.receive("stolen=1; Domain=attacker.test; Path=/", "https://accounts.dmm.com/");
+  session.receive("parent=1; Domain=com; Path=/", "https://accounts.dmm.com/");
+  expect(session.header("https://attacker.test/")).toBe("");
+  expect(session.header("https://example.com/")).toBe("");
+  expect(session.header("https://accounts.dmm.com/")).toBe("");
+});
+
+test("ログインフォームの隠し項目を送り返せる形で取り出す", () => {
+  const html = `<form action="/service/login/password/authenticate" method="post">
+    <input type="hidden" name="token" value="t1"/><input type="hidden" name="user_device" value="d1"/>
+    <input type="email" name="login_id"/><input type="password" name="password"/>
+    <input type="hidden" name="recaptchaToken" value=""/></form>`;
+  expect(passwordForm(html)).toEqual({ token: "t1", user_device: "d1", recaptchaToken: "" });
+  expect(() => passwordForm("<form action='/other'></form>")).toThrow("ログインフォームが変更");
+});
+
+test("ログイン画面に戻された理由を読み取る", () => {
+  expect(
+    loginErrors('{"isStatic":false,"error":["メールアドレスまたはパスワードが正しくありません。"]}'),
+  ).toEqual(["メールアドレスまたはパスワードが正しくありません。"]);
+  expect(loginErrors('{"error":[]}')).toEqual([]);
+  expect(loginErrors("<html></html>")).toEqual([]);
 });

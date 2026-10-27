@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
+import * as cheerio from "cheerio";
 import { DmmClient, parseHistory } from "./dmm";
 import type { Credentials } from "./domain";
 import type { LoginIdentity } from "./prompt";
@@ -9,84 +8,17 @@ import { atomicJson, type Store } from "./store";
 /** DMM refused the email/password itself, so trying the same password again cannot succeed. */
 export class LoginRejected extends Error {}
 
-type Cookie = { name: string; value: string; domain: string; path: string; secure: boolean; expires: number };
-type EventHandler = (method: string, params: Record<string, unknown>) => void;
+const PASSWORD_LOGIN = "https://accounts.dmm.com/service/login/password";
+const HISTORY = "https://eikaiwa.dmm.com/lesson/";
+/** The DMM英会話 web app's public OAuth client, brand and callback, as its own sign-in uses them. */
+const API_AUTHORIZE = "https://api.eikaiwa.dmm.com/api/oauth/authorize";
+const API_CLIENT_ID = "946a79332d4fc03468f3e680e3917edde70659d77e9850b2e2c86e87b5c74293";
+const EIKAIWA_BRAND = "5a4657f2-e151-4c48-9cce-000000000005";
+const API_CALLBACK = "https://eikaiwa.dmm.com/app/login/callback";
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
 
-/** Only controls the Chrome process launched for this app's dedicated login profile. */
-class LoginConnection {
-  private sequence = 0;
-  private pending = new Map<number, { resolve: (result: unknown) => void; reject: (error: Error) => void }>();
-  onEvent: EventHandler = () => {};
-  private constructor(private readonly socket: WebSocket) {
-    socket.addEventListener("message", (event) => {
-      const message = JSON.parse(String(event.data)) as {
-        id?: number;
-        result?: unknown;
-        error?: { message: string };
-        method?: string;
-        params?: Record<string, unknown>;
-      };
-      if (message.id) {
-        const waiter = this.pending.get(message.id);
-        this.pending.delete(message.id);
-        if (message.error) waiter?.reject(new Error(`ログイン用ブラウザ: ${message.error.message}`));
-        else waiter?.resolve(message.result);
-      } else if (message.method) this.onEvent(message.method, message.params ?? {});
-    });
-    socket.addEventListener("close", () => {
-      for (const waiter of this.pending.values())
-        waiter.reject(new Error("ログイン用ブラウザが閉じられました。"));
-      this.pending.clear();
-    });
-  }
-  static async connect(url: string): Promise<LoginConnection> {
-    const socket = new WebSocket(url);
-    const connection = new LoginConnection(socket);
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("ログイン用ブラウザに接続できません。")), 10_000);
-      socket.addEventListener(
-        "open",
-        () => {
-          clearTimeout(timer);
-          resolve();
-        },
-        { once: true },
-      );
-      socket.addEventListener(
-        "error",
-        () => {
-          clearTimeout(timer);
-          reject(new Error("ログイン用ブラウザの接続が失敗しました。"));
-        },
-        { once: true },
-      );
-    });
-    return connection;
-  }
-  async send<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    const id = ++this.sequence;
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`ログイン処理がタイムアウトしました (${method})。`));
-      }, 15_000);
-      this.pending.set(id, {
-        resolve: (value) => {
-          clearTimeout(timer);
-          resolve(value as T);
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          reject(error);
-        },
-      });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-  close() {
-    this.socket.close();
-  }
-}
+type Cookie = { name: string; value: string; domain: string; path: string; secure: boolean; expires: number };
 
 export function cookieHeader(cookies: Cookie[], url: string, now = Date.now() / 1000): string {
   const target = new URL(url);
@@ -112,294 +44,199 @@ export function cookieHeader(cookies: Cookie[], url: string, now = Date.now() / 
     .join("; ");
 }
 
-export function captureApiHeaders(
-  url: string,
-  headers: Record<string, unknown>,
-  credentials: Credentials,
-): void {
-  if (new URL(url).origin !== "https://api.engoo.com") return;
-  for (const [key, value] of Object.entries(headers)) {
-    if (typeof value !== "string") continue;
-    if (key.toLowerCase() === "authorization" && /^Bearer\s+\S+$/i.test(value)) credentials.bearer = value;
-    if (key.toLowerCase() === "x-viewmodel-versions") credentials.viewmodel = value;
+/** Cookies of one sign-in. Each setup starts empty, so no previous session can stand in for the password. */
+export class LoginSession {
+  private cookies: Cookie[] = [];
+  /** Stores a Set-Cookie header received from `url`; an expired one removes the stored cookie. */
+  receive(setCookie: string, url: string, now = Date.now() / 1000): void {
+    const [pair = "", ...attributes] = setCookie.split(";").map((part) => part.trim());
+    const at = pair.indexOf("=");
+    if (at < 1) return;
+    const attribute = (name: string) =>
+      attributes
+        .find((a) => a.toLowerCase().startsWith(`${name}=`))
+        ?.slice(name.length + 1)
+        .trim();
+    const host = new URL(url).hostname;
+    const domain = attribute("domain")?.replace(/^\./, "").toLowerCase();
+    // Only for the responding host or a parent domain within dmm.com, never a whole public suffix.
+    if (domain && ((host !== domain && !host.endsWith(`.${domain}`)) || !/(^|\.)dmm\.com$/.test(domain)))
+      return;
+    const maxAge = attribute("max-age");
+    const expiresAt = attribute("expires");
+    const expires =
+      maxAge !== undefined ? now + Number(maxAge) : expiresAt ? Date.parse(expiresAt) / 1000 : -1;
+    const cookie: Cookie = {
+      name: pair.slice(0, at),
+      value: pair.slice(at + 1),
+      domain: domain ? `.${domain}` : host,
+      path: attribute("path") ?? "/",
+      secure: attributes.some((a) => a.toLowerCase() === "secure"),
+      expires,
+    };
+    this.cookies = this.cookies.filter(
+      (c) => !(c.name === cookie.name && c.domain === cookie.domain && c.path === cookie.path),
+    );
+    if (expires === -1 || expires > now) this.cookies.push(cookie);
+  }
+  header(url: string): string {
+    return cookieHeader(this.cookies, url);
+  }
+  has(name: string, url: string): boolean {
+    return this.header(url)
+      .split("; ")
+      .some((pair) => pair.startsWith(`${name}=`));
+  }
+  /**
+   * Requests `url` and follows redirects within DMM, keeping cookies. Stops before a redirect that
+   * `stopAt` accepts and returns that URL, so a token in its fragment is read rather than requested.
+   */
+  async visit(
+    url: string,
+    init: { method?: string; form?: URLSearchParams; referer?: string } = {},
+    stopAt: (next: URL) => boolean = () => false,
+  ): Promise<{ url: URL; body: string }> {
+    let current = new URL(url);
+    let request = init;
+    for (let hop = 0; hop < 15; hop++) {
+      if (current.protocol !== "https:" || !/(^|\.)dmm\.com$/.test(current.hostname))
+        throw new Error("DMM以外のログイン先を拒否しました。");
+      const response = await fetch(current, {
+        method: request.method ?? "GET",
+        body: request.form,
+        redirect: "manual",
+        signal: AbortSignal.timeout(30_000),
+        headers: {
+          "User-Agent": USER_AGENT,
+          "Accept-Language": "ja",
+          Cookie: this.header(current.href),
+          ...(request.form && {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Origin: current.origin,
+          }),
+          ...(request.referer && { Referer: request.referer }),
+        },
+      });
+      for (const setCookie of response.headers.getSetCookie()) this.receive(setCookie, current.href);
+      const location = response.headers.get("location");
+      if (response.status < 300 || response.status >= 400 || !location)
+        return { url: current, body: await response.text() };
+      await response.body?.cancel();
+      const next = new URL(location, current);
+      if (stopAt(next)) return { url: next, body: "" };
+      current = next;
+      request = {};
+    }
+    throw new Error("DMMのログインでリダイレクトが続きました。");
   }
 }
 
-function chromeExecutable(explicit?: string): string {
-  const paths = explicit
-    ? [explicit]
-    : process.platform === "darwin"
-      ? [
-          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-          join(homedir(), "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-        ]
-      : ["google-chrome", "chromium", "chromium-browser", "chrome.exe"];
-  for (const path of paths) {
-    const resolved = Bun.which(path);
-    if (resolved) return resolved;
-  }
-  throw new Error(
-    "Google Chromeが見つかりません。インストールするか、dmm setup --browser PATHで実行ファイルを指定してください。",
+/** The hidden fields of DMM's password form (one-time token, device id, ...), which must be sent back. */
+export function passwordForm(html: string): Record<string, string> {
+  const $ = cheerio.load(html);
+  const form = $('form[action*="/password/authenticate"]');
+  if (!form.find('input[name="login_id"]').length || !form.find('input[name="password"]').length)
+    throw new Error("DMMのログインフォームが変更されています。");
+  return Object.fromEntries(
+    form
+      .find('input[type="hidden"][name]')
+      .toArray()
+      .map((input) => [$(input).attr("name") ?? "", $(input).attr("value") ?? ""]),
   );
 }
 
+/** Why DMM sent the sign-in back to the login page, from the error list it embeds in that page. */
+export function loginErrors(html: string): string[] {
+  const list = /"error":(\[[^\]]*\])/.exec(html)?.[1];
+  if (!list) return [];
+  try {
+    return (JSON.parse(list) as unknown[]).filter((e): e is string => typeof e === "string");
+  } catch {
+    return [];
+  }
+}
+
+/** Signs in to the DMM account with the password; DMM sets its shared session on .dmm.com. */
+async function signInToDmm(session: LoginSession, identity: LoginIdentity): Promise<void> {
+  const page = await session.visit(PASSWORD_LOGIN);
+  const form = new URLSearchParams({
+    ...passwordForm(page.body),
+    login_id: identity.email,
+    password: identity.password,
+    use_auto_login: "1",
+  });
+  identity.password = "";
+  const result = await session.visit(`${PASSWORD_LOGIN}/authenticate`, {
+    method: "POST",
+    form,
+    referer: page.url.href,
+  });
+  if (session.has("login_session_id", HISTORY)) return;
+  const errors = loginErrors(result.body);
+  if (errors.some((e) => /メールアドレス|パスワード/.test(e)))
+    throw new LoginRejected(
+      "DMMへのログインが拒否されました。メールアドレス・パスワードを確認してください。",
+    );
+  if (!errors.length && result.url.hostname === "accounts.dmm.com")
+    throw new LoginRejected(
+      "DMMから追加認証が求められました。通常のDMMサイトで認証を完了してからdmm setupを再実行してください。",
+    );
+  throw new Error(`DMMへのログインが完了しませんでした。${errors.join(" ")}`.trim());
+}
+
+/** Trades the DMM session for the DMM英会話 API token, the way the web app signs in (OAuth implicit flow). */
+async function apiToken(session: LoginSession): Promise<string> {
+  const authorize = new URL(API_AUTHORIZE);
+  authorize.search = new URLSearchParams({
+    client_id: API_CLIENT_ID,
+    response_type: "token",
+    redirect_uri: API_CALLBACK,
+    scope: "allUnprivileged",
+    provider: "dmm",
+    brand: EIKAIWA_BRAND,
+    client_type: "desktop",
+    display: "page",
+    state: crypto.randomUUID(),
+  }).toString();
+  const { url } = await session.visit(authorize.href, {}, (next) => next.href.startsWith(API_CALLBACK));
+  const answer = new URLSearchParams(url.hash.slice(1));
+  const token = answer.get("access_token");
+  if (!url.href.startsWith(API_CALLBACK) || !token)
+    throw new Error(
+      `DMM英会話の録音への接続を取得できませんでした${answer.get("error") ? ` (${answer.get("error")})` : ""}。`,
+    );
+  return `Bearer ${token}`;
+}
+
+/** Signs in, proves both the history page and the recording API accept the session, then saves it. */
 export async function setupLogin(
   store: Store,
   report: (message: string) => void,
   identity: LoginIdentity,
-  options: { browser?: string } = {},
 ): Promise<void> {
   try {
-    await withFreshLoginProfile(store.path("login-browser"), (profile) =>
-      loginWithBrowser(store, report, identity, profile, options),
-    );
+    // Earlier versions signed in through a Chrome profile here; it may still hold an old DMM session.
+    rmSync(store.path("login-browser"), { recursive: true, force: true });
+    const session = new LoginSession();
+    report("メールアドレスとパスワードで認証しています…");
+    await signInToDmm(session, identity);
+    report("ログインを確認しました。録音への接続を確認しています…");
+    const credentials: Credentials = { dmmCookie: session.header(HISTORY), bearer: await apiToken(session) };
+    const client = new DmmClient(credentials);
+    const page = parseHistory(await client.history("/lesson/"));
+    for (const lesson of page.lessons) store.merge(lesson);
+    const bookingId = page.lessons.find((l) => l.bookingId)?.bookingId;
+    if (bookingId) await client.api(`/api/lesson_bookings/${bookingId}/combined`);
+    else await client.currentUser();
+    // Replace, rather than merge, credentials so a previous account's token cannot survive setup.
+    atomicJson(store.path("credentials.json"), {
+      ...credentials,
+      savedAt: new Date().toISOString(),
+      email: identity.email,
+    });
+    store.save();
+    report("ログイン情報を保存しました。");
   } finally {
     identity.password = "";
   }
-}
-
-/** Every setup validates the supplied password, independently of previous browser sessions. */
-export async function withFreshLoginProfile(
-  root: string,
-  signIn: (profile: string) => Promise<void>,
-): Promise<void> {
-  mkdirSync(root, { recursive: true, mode: 0o700 });
-  const profile = mkdtempSync(join(root, "attempt-"));
-  try {
-    await signIn(profile);
-  } finally {
-    rmSync(profile, { recursive: true, force: true });
-  }
-}
-
-async function loginWithBrowser(
-  store: Store,
-  report: (message: string) => void,
-  identity: LoginIdentity,
-  profile: string,
-  options: { browser?: string },
-): Promise<void> {
-  const activePort = join(profile, "DevToolsActivePort");
-  const child = Bun.spawn(
-    [
-      chromeExecutable(options.browser),
-      `--user-data-dir=${profile}`,
-      "--remote-debugging-address=127.0.0.1",
-      "--remote-debugging-port=0",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--headless=new",
-      "about:blank",
-    ],
-    { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
-  );
-  const terminate = () => {
-    child.kill();
-  };
-  process.once("exit", terminate);
-  let connection: LoginConnection | undefined;
-  try {
-    const launchDeadline = Date.now() + 20_000;
-    while (!existsSync(activePort)) {
-      if (child.exitCode !== null || Date.now() > launchDeadline)
-        throw new Error(
-          "ログイン用Chromeを起動できません。DMM Companion用のChromeを閉じて再実行してください。",
-        );
-      await Bun.sleep(150);
-    }
-    const port = Number(readFileSync(activePort, "utf8").split("\n")[0]);
-    if (!Number.isInteger(port) || port < 1 || port > 65535)
-      throw new Error("Chromeの接続ポートが不正です。");
-    const targets = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as {
-      type: string;
-      webSocketDebuggerUrl?: string;
-    }[];
-    const target = targets.find((t) => t.type === "page" && t.webSocketDebuggerUrl);
-    if (!target?.webSocketDebuggerUrl) throw new Error("ログインタブを開けません。");
-    connection = await LoginConnection.connect(target.webSocketDebuggerUrl);
-    const auth: Credentials = {};
-    const requests = new Map<string, string>();
-    const extras = new Map<string, Record<string, unknown>>();
-    connection.onEvent = (method, params) => {
-      if (method === "Network.requestWillBeSent") {
-        const request = params.request as { url: string; headers: Record<string, unknown> };
-        const id = String(params.requestId);
-        if (!request.url.startsWith("https://api.engoo.com/")) return;
-        requests.set(id, request.url);
-        captureApiHeaders(request.url, request.headers, auth);
-        const extra = extras.get(id);
-        if (extra) {
-          captureApiHeaders(request.url, extra, auth);
-          extras.delete(id);
-        }
-      }
-      if (method === "Network.requestWillBeSentExtraInfo") {
-        const id = String(params.requestId);
-        const headers = params.headers as Record<string, unknown>;
-        const url = requests.get(id);
-        if (url) captureApiHeaders(url, headers, auth);
-        else {
-          if (extras.size > 300) extras.clear();
-          extras.set(id, headers);
-        }
-      }
-    };
-    await connection.send("Network.enable");
-    await connection.send("Page.enable");
-    await connection.send("Page.navigate", { url: "https://eikaiwa.dmm.com/lesson/" });
-    report("DMMのログインフォームを開いています…");
-    await signInWithPassword(connection, identity, report);
-    identity.password = "";
-    const deadline = Date.now() + 90_000;
-    let bookingId: string | undefined;
-    let historyReady = false;
-    let stageReported = false;
-    while (Date.now() < deadline) {
-      if (child.exitCode !== null)
-        throw new Error("ログイン用Chromeが終了しました。dmm setupを再実行してください。");
-      const { cookies } = await connection.send<{ cookies: Cookie[] }>("Network.getCookies", {
-        urls: ["https://eikaiwa.dmm.com/lesson/", "https://api.engoo.com/api/users/current"],
-      });
-      const dmmCookie = cookieHeader(cookies, "https://eikaiwa.dmm.com/lesson/");
-      const apiCookie = cookieHeader(cookies, "https://api.engoo.com/api/users/current");
-      if (dmmCookie) auth.dmmCookie = dmmCookie;
-      if (apiCookie) auth.apiCookie = apiCookie;
-      if (auth.dmmCookie && !historyReady) {
-        try {
-          const page = parseHistory(await new DmmClient(auth).history("/lesson/"));
-          historyReady = true;
-          for (const lesson of page.lessons) store.merge(lesson);
-          bookingId = page.lessons.find((l) => l.bookingId)?.bookingId;
-          if (bookingId) {
-            const short = Buffer.from(bookingId.replaceAll("-", ""), "hex").toString("base64url");
-            await connection.send("Page.navigate", {
-              url: `https://eikaiwa.dmm.com/app/lesson-booking/${short}`,
-            });
-          } else await connection.send("Page.navigate", { url: "https://eikaiwa.dmm.com/app/" });
-        } catch (error) {
-          if (!(error instanceof Error) || !/認証|ログイン|履歴ページ/.test(error.message)) throw error;
-        }
-      }
-      if (historyReady && !stageReported) {
-        report("ログインを確認しました。録音への接続を確認しています…");
-        stageReported = true;
-      }
-      if (historyReady && (auth.bearer || auth.apiCookie)) {
-        try {
-          const client = new DmmClient(auth);
-          if (bookingId) await client.api(`/api/lesson_bookings/${bookingId}/combined`);
-          else await client.currentUser();
-          // Replace, rather than merge, credentials so a previous account's token cannot survive setup.
-          auth.savedAt = new Date().toISOString();
-          auth.email = identity.email;
-          atomicJson(store.path("credentials.json"), auth);
-          store.save();
-          report("ログイン情報を保存しました。");
-          return;
-        } catch (error) {
-          if (!(error instanceof Error) || !/認証/.test(error.message)) throw error;
-        }
-      }
-      await Bun.sleep(1200);
-    }
-    throw new Error("ログイン後の接続を確認できませんでした。dmm setupを再実行してください。");
-  } finally {
-    identity.password = "";
-    process.removeListener("exit", terminate);
-    if (connection) {
-      try {
-        await connection.send("Browser.close");
-      } catch {
-        /* Browser.close may close the socket before replying. */
-      }
-      connection.close();
-    }
-    child.kill();
-    await child.exited;
-  }
-}
-
-type LoginPage = {
-  url: string;
-  hasPassword: boolean;
-  loginLink: string | null;
-  error: string;
-  challenge: boolean;
-};
-async function signInWithPassword(
-  connection: LoginConnection,
-  identity: LoginIdentity,
-  report: (message: string) => void,
-): Promise<void> {
-  const deadline = Date.now() + 90_000;
-  let submitted = false;
-  const followed = new Set<string>();
-  while (Date.now() < deadline) {
-    const state = await connection.send<{ result: { value?: LoginPage }; exceptionDetails?: unknown }>(
-      "Runtime.evaluate",
-      {
-        expression: `(() => {
-        const form = document.querySelector('form[action*="/password/authenticate"]');
-        const anchor = Array.from(document.querySelectorAll('a[href]')).find(a => a.href.includes('/app/oauth/authorize') && a.href.includes('force_login=1'))
-          || Array.from(document.querySelectorAll('a[href]')).find(a => a.href.includes('accounts.dmm.com/service/login/password'));
-        const error = Array.from(document.querySelectorAll('.error-message, .errorMessage, .message--error, [role="alert"]')).map(e => e.textContent).join(' ').trim();
-        return { url: location.href, hasPassword: !!form?.querySelector('input[name="login_id"]') && !!form?.querySelector('input[name="password"]'), loginLink: anchor?.href ?? null, error,
-          challenge: !!document.querySelector('input[autocomplete="one-time-code"], iframe[src*="recaptcha"][title*="challenge"]') };
-      })()`,
-        returnByValue: true,
-      },
-    );
-    const page = state.result.value;
-    if (!page) {
-      await Bun.sleep(500);
-      continue;
-    }
-    const url = new URL(page.url);
-    if (page.challenge)
-      throw new LoginRejected(
-        "DMMから追加認証が求められました。通常のDMMサイトで認証を完了してからdmm setupを再実行してください。",
-      );
-    if (submitted && page.error)
-      throw new LoginRejected(
-        "DMMへのログインが拒否されました。メールアドレス・パスワード、または追加認証を確認してください。",
-      );
-    if (
-      submitted &&
-      url.hostname === "eikaiwa.dmm.com" &&
-      !url.pathname.includes("/login") &&
-      !url.pathname.includes("/oauth")
-    )
-      return;
-    if (!submitted && page.hasPassword && url.origin === "https://accounts.dmm.com") {
-      report("メールアドレスとパスワードで認証しています…");
-      const credentials = JSON.stringify({ email: identity.email, password: identity.password });
-      const result = await connection.send<{ exceptionDetails?: unknown }>("Runtime.evaluate", {
-        expression: `(() => {
-          const credentials = ${credentials};
-          const form = document.querySelector('form[action*="/password/authenticate"]');
-          for (const [name, value] of [['login_id', credentials.email], ['password', credentials.password]]) {
-            const input = form.querySelector('input[name="' + name + '"]');
-            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-          }
-          const remember = form.querySelector('input[name="use_auto_login"]');
-          if (remember && !remember.checked) remember.click();
-          const submit = form.querySelector('button[type="submit"], input[type="submit"]');
-          if (submit) submit.click(); else form.requestSubmit();
-        })()`,
-        returnByValue: true,
-      });
-      if (result.exceptionDetails) throw new Error("DMMのログインフォームが変更されています。");
-      submitted = true;
-    } else if (!submitted && page.loginLink && !followed.has(page.loginLink)) {
-      const target = new URL(page.loginLink);
-      if (target.protocol !== "https:" || !["eikaiwa.dmm.com", "accounts.dmm.com"].includes(target.hostname))
-        throw new Error("DMM以外のログイン先を拒否しました。");
-      followed.add(page.loginLink);
-      await connection.send("Page.navigate", { url: target.href });
-    }
-    await Bun.sleep(750);
-  }
-  throw new Error("DMMへのログインが完了しませんでした。入力情報または追加認証を確認してください。");
 }
