@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Lesson, Library } from "../domain";
+import { slackShareText } from "../share";
 import { clock, span, timedSegments } from "../timestamps";
 import { LessonAssessment } from "./assessment";
 import { Growth } from "./growth";
@@ -78,6 +79,7 @@ function App() {
   const [month, setMonth] = useState("");
   const [error, setError] = useState("");
   const [help, setHelp] = useState(false);
+  const [copied, setCopied] = useState("");
   const [showLearned, setShowLearned] = useState(false);
   const audio = useRef<HTMLAudioElement>(null);
   const stopAt = useRef<number | null>(null);
@@ -522,6 +524,23 @@ function App() {
                     <p className="teacher-line">
                       with <strong>{lesson.teacher}</strong>
                       {lesson.audio && <span> · {clock(lesson.audio.seconds)} の会話</span>}
+                      {lesson.feedback && (
+                        <>
+                          {" · "}
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() =>
+                              navigator.clipboard.writeText(slackShareText(lesson)).then(
+                                () => setCopied(lesson.id),
+                                (e) => setError(`コピーできませんでした: ${e}`),
+                              )
+                            }
+                          >
+                            {copied === lesson.id ? "コピーしました" : "Slack用にコピー"}
+                          </button>
+                        </>
+                      )}
                     </p>
                     {lesson.audio && (
                       <div className="player">
