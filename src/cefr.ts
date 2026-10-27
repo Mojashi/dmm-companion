@@ -14,6 +14,11 @@ export const cefrScore: Record<CefrLevel, number> = {
   C2: 6,
 };
 
+/** One lesson's level on a continuous scale: the mean of its aspect levels, since the overall level is a step. */
+export function aspectMean(aspects: CefrLevel[]): number | null {
+  return aspects.length ? aspects.reduce((s, l) => s + cefrScore[l], 0) / aspects.length : null;
+}
+
 export type Assessed = { date: string; overall: CefrLevel; aspects: Record<string, CefrLevel> };
 export type Period = {
   from: string;

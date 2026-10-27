@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { cefrLevels, cefrPeriods, cefrScore } from "../cefr";
+import { aspectMean, type CefrLevel, cefrLevels, cefrPeriods, cefrScore } from "../cefr";
 import type { Lesson, SpeakingMetrics } from "../domain";
 
 type Measured = Pick<Lesson, "id" | "date" | "teacher" | "metrics" | "assessment">;
@@ -10,12 +10,12 @@ const fromMetrics =
   (l: Measured): number | null =>
     l.metrics ? read(l.metrics) : null;
 
-/** A CEFR-like score (A2 = 2, B1 = 3, "+" = 0.5) shown as the nearest level; averages keep one decimal. */
+/** A CEFR-like score (A2 = 2, B1 = 3, "+" = 0.5) shown as the nearest level with the score, so averages stay comparable. */
 function cefrLabel(score: number): string {
   const nearest = cefrLevels.reduce((best, level) =>
     Math.abs(cefrScore[level] - score) < Math.abs(cefrScore[best] - score) ? level : best,
   );
-  return Number.isInteger(score * 2) ? nearest : `${nearest} (${score.toFixed(1)})`;
+  return `${nearest} (${score.toFixed(1)})`;
 }
 
 /** Lessons swing with the topic, so trends are read from the average of this many recent lessons. */
@@ -32,11 +32,11 @@ type Measure = {
 const measures: Measure[] = [
   {
     key: "cefr",
-    label: "CEFRの目安 (総合)",
-    value: (l) => (l.assessment ? cefrScore[l.assessment.overall.level] : null),
+    label: "CEFRの目安 (6観点の平均)",
+    value: (l) => (l.assessment ? aspectMean(l.assessment.criteria.map((c) => c.level)) : null),
     format: cefrLabel,
     better: "higher",
-    note: "録音からGeminiが判定した総合レベルの目安。1回ごとの判定は粗いので平均の推移で見る",
+    note: "録音からGeminiが判定した6観点のレベルを数値 (A2 = 2, B1 = 3, + = 0.5) にして平均した目安",
   },
   {
     key: "share",
@@ -205,63 +205,112 @@ const aspectLabel: Record<string, string> = {
 /** Lessons per period: enough judgements that one lesson's topic does not decide the level. */
 const periodSize = 10;
 
-/** The CEFR estimate averaged over every 10 judged lessons, newest period last. */
-function Periods({ lessons }: { lessons: Measured[] }) {
+type Judged = { lesson: Measured; overall: CefrLevel; aspects: Record<string, CefrLevel> };
+
+/** The judged lessons, oldest first, with their levels per aspect keyed by criterion. */
+function judged(lessons: Measured[]): Judged[] {
+  return lessons.flatMap((l) =>
+    l.assessment
+      ? [
+          {
+            lesson: l,
+            overall: l.assessment.overall.level,
+            aspects: Object.fromEntries(l.assessment.criteria.map((c) => [c.criterion, c.level])),
+          },
+        ]
+      : [],
+  );
+}
+
+/** The CEFR estimate per aspect, either averaged over every 10 judged lessons or lesson by lesson, newest first. */
+function Periods({ lessons, onOpen }: { lessons: Measured[]; onOpen: (id: string) => void }) {
+  const [view, setView] = useState<"periods" | "lessons">("periods");
+  const judgements = judged(lessons);
   const periods = cefrPeriods(
-    lessons.flatMap((l) =>
-      l.assessment
-        ? [
-            {
-              date: l.date,
-              overall: l.assessment.overall.level,
-              aspects: Object.fromEntries(l.assessment.criteria.map((c) => [c.criterion, c.level])),
-            },
-          ]
-        : [],
-    ),
+    judgements.map((j) => ({ date: j.lesson.date, overall: j.overall, aspects: j.aspects })),
     periodSize,
   );
   if (!periods.length) return null;
   const aspects = Object.keys(periods.at(-1)?.aspects ?? {});
   return (
     <div className="growth-periods">
-      <h3>
-        {periodSize}回ごとのCEFRの目安 <span>各レッスンの判定を平均したもの</span>
-      </h3>
+      <div className="growth-periods-heading">
+        <h3>
+          {view === "periods" ? (
+            <>
+              {periodSize}回ごとのCEFRの目安 <span>各レッスンの判定を平均したもの</span>
+            </>
+          ) : (
+            <>
+              レッスンごとのCEFRの目安 <span>1回ごとの判定。話題で上下します</span>
+            </>
+          )}
+        </h3>
+        <fieldset className="growth-switch" aria-label="表示の単位">
+          <button type="button" aria-pressed={view === "periods"} onClick={() => setView("periods")}>
+            {periodSize}回ごと
+          </button>
+          <button type="button" aria-pressed={view === "lessons"} onClick={() => setView("lessons")}>
+            各レッスン
+          </button>
+        </fieldset>
+      </div>
       <div className="growth-table-wrap">
         <table className="growth-table">
           <thead>
             <tr>
-              <th>期間</th>
-              <th>回数</th>
+              {view === "periods" ? (
+                <>
+                  <th>期間</th>
+                  <th>回数</th>
+                </>
+              ) : (
+                <>
+                  <th>日付</th>
+                  <th>講師</th>
+                </>
+              )}
               <th>総合</th>
+              {view === "lessons" && <th>6観点の平均</th>}
               {aspects.map((a) => (
                 <th key={a}>{aspectLabel[a] ?? a}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {[...periods].reverse().map((p, i, all) => {
-              const previous = all[i + 1];
-              const change = previous ? p.overall - previous.overall : 0;
-              return (
-                <tr key={p.from}>
-                  <td>
-                    {day(p.from)}〜{day(p.to)}
-                  </td>
-                  <td>{p.count}</td>
-                  <td>
-                    {cefrLabel(p.overall)}
-                    {Math.abs(change) >= 0.25 && (
-                      <span className="growth-delta">{change > 0 ? " ↗" : " ↘"}</span>
-                    )}
-                  </td>
-                  {aspects.map((a) => (
-                    <td key={a}>{p.aspects[a] === undefined ? "—" : cefrLabel(p.aspects[a])}</td>
-                  ))}
-                </tr>
-              );
-            })}
+            {view === "periods"
+              ? [...periods].reverse().map((p, i, all) => {
+                  const previous = all[i + 1];
+                  const change = previous ? p.overall - previous.overall : 0;
+                  return (
+                    <tr key={p.from}>
+                      <td>
+                        {day(p.from)}〜{day(p.to)}
+                      </td>
+                      <td>{p.count}</td>
+                      <td>
+                        {cefrLabel(p.overall)}
+                        {Math.abs(change) >= 0.25 && (
+                          <span className="growth-delta">{change > 0 ? " ↗" : " ↘"}</span>
+                        )}
+                      </td>
+                      {aspects.map((a) => (
+                        <td key={a}>{p.aspects[a] === undefined ? "—" : cefrLabel(p.aspects[a])}</td>
+                      ))}
+                    </tr>
+                  );
+                })
+              : [...judgements].reverse().map((j) => (
+                  <tr key={j.lesson.id} onClick={() => onOpen(j.lesson.id)}>
+                    <td>{day(j.lesson.date)}</td>
+                    <td>{j.lesson.teacher}</td>
+                    <td>{j.overall}</td>
+                    <td>{cefrLabel(aspectMean(Object.values(j.aspects)) ?? cefrScore[j.overall])}</td>
+                    {aspects.map((a) => (
+                      <td key={a}>{j.aspects[a] ?? "—"}</td>
+                    ))}
+                  </tr>
+                ))}
           </tbody>
         </table>
       </div>
@@ -297,7 +346,7 @@ export function Growth({
               <Tile key={m.key} lessons={measured} measure={m} onOpen={onOpen} />
             ))}
           </div>
-          <Periods lessons={measured} />
+          <Periods lessons={measured} onOpen={onOpen} />
           <p className="growth-caveat">
             話題や教材で1回ごとの値は大きく動きます。平均の線の向きで見てください。点を押すとそのレッスンを開きます。
             {failed ? ` 計測できなかったレッスンが${failed}件あります。` : ""}

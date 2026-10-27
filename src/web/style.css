@@ -1533,10 +1533,39 @@ footer {
 .growth-periods {
   margin: 26px 0 8px;
 }
+.growth-periods-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 10px;
+}
 .growth-periods h3 {
   font-size: 13px;
   font-weight: 500;
-  margin: 0 0 10px;
+  margin: 0;
+}
+.growth-switch {
+  display: inline-flex;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.growth-switch button {
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.growth-switch button[aria-pressed="true"] {
+  background: var(--accent);
+  color: #fff;
 }
 .growth-periods h3 span {
   font-size: 10px;
