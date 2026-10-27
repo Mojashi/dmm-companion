@@ -28,7 +28,11 @@ export function slackEscape(text: string): string {
 }
 
 type Block = Record<string, unknown>;
-export type SlackMessage = { text: string; blocks?: Block[] };
+export type SlackMessage = {
+  text: string;
+  blocks?: Block[];
+  attachments?: { color: string; blocks: Block[] }[];
+};
 
 const mrkdwn = (text: string): Block => ({ type: "section", text: { type: "mrkdwn", text } });
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -95,7 +99,10 @@ function cefrBlocks(lesson: Lesson, history: Lesson[]): Block[] {
   ];
 }
 
-/** The review as Block Kit: title, CEFR bars when judged, then the summary, focus points and next lesson. */
+/**
+ * The review as Block Kit: title and CEFR bars when judged up front, then the summary, focus points and next lesson.
+ * The long part goes in an attachment, which Slack folds behind "Show more" after a few lines.
+ */
 export function reviewSlackMessage(lesson: Lesson, history: Lesson[] = []): SlackMessage {
   if (!lesson.feedback) throw new Error("投稿する振り返りがありません。");
   const feedback = mapFeedbackProse(lesson.feedback, plainTimes);
@@ -111,10 +118,22 @@ export function reviewSlackMessage(lesson: Lesson, history: Lesson[] = []): Slac
         type: "context",
         elements: [{ type: "mrkdwn", text: slackEscape(`DMM英会話 · ${date} · ${lesson.teacher}先生`) }],
       },
-      ...(cefr.length ? [...cefr, { type: "divider" }] : []),
-      mrkdwn(slackEscape(clip(feedback.summary, 2900))),
-      mrkdwn(`*今日の重点*\n${list(feedback.focus.slice(0, 3))}`),
-      mrkdwn(`*次のレッスンで使う*\n${list(feedback.nextLesson)}`),
+      ...cefr,
+    ],
+    attachments: [
+      {
+        color: "#2eb67d",
+        // One section, since Slack folds each section on its own; the parts stay under its 3000 characters.
+        blocks: [
+          mrkdwn(
+            [
+              slackEscape(clip(feedback.summary, 1800)),
+              `*今日の重点*\n${list(feedback.focus.slice(0, 3).map((s) => clip(s, 200)))}`,
+              `*次のレッスンで使う*\n${list(feedback.nextLesson.slice(0, 5).map((s) => clip(s, 150)))}`,
+            ].join("\n\n"),
+          ),
+        ],
+      },
     ],
   };
 }

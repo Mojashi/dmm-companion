@@ -67,6 +67,10 @@ test("Slack投稿はAIや講師の文の制御文字をエスケープし、メ�
   expect(json).not.toContain("<!channel>");
   expect(message.text).toContain("*DMM英会話の振り返り: Practice*");
   expect(json).not.toContain("CEFR");
+  // The long summary and lists sit in one attachment section, which Slack folds behind "Show more".
+  expect(JSON.stringify(message.blocks)).not.toContain("今日の重点");
+  expect(message.attachments?.[0]?.blocks).toHaveLength(1);
+  expect(JSON.stringify(message.attachments)).toContain("今日の重点");
 });
 
 test("CEFRは6マスのバーで観点ごとに並べ、直近の平均より半段以上の変化に矢印を付け、最も低い観点の次の一歩を載せる", () => {
