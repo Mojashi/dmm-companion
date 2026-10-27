@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { timeline } from "../src/audio";
 import { Companion, parseFeedback } from "../src/coach";
-import { DmmClient, parseHistory, parseTracks, recordingKey } from "../src/dmm";
+import { DmmClient, parseDisplayName, parseHistory, parseTracks, recordingKey } from "../src/dmm";
 import { bookingUuid, duration, type Feedback, type Lesson } from "../src/domain";
 import { importHar, syncHistory } from "../src/importer";
 import { Store } from "../src/store";
@@ -276,4 +276,10 @@ describe("Audio and coaching", () => {
     expect(reopened.lesson("first").phase).toBe("error");
     expect(reopened.lesson("first").error).toContain("中断");
   });
+});
+
+test("プロフィールの表示名を取り出し、未設定なら名前なしとする", () => {
+  expect(parseDisplayName({ data: { display_name: " Akihiro " } })).toBe("Akihiro");
+  expect(parseDisplayName({ data: { display_name: "" } })).toBeUndefined();
+  expect(parseDisplayName({ data: { display_name: null } })).toBeUndefined();
 });

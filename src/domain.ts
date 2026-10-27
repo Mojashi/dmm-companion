@@ -112,6 +112,8 @@ export type Credentials = {
   viewmodel?: string;
   savedAt?: string;
   email?: string;
+  /** The learner's display name on DMM英会話, kept at sign-in and shown on shared reviews. */
+  displayName?: string;
 };
 export type ApiObject = Record<string, unknown>;
 export type ApiEnvelope = {

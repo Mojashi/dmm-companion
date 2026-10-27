@@ -103,7 +103,10 @@ function cefrBlocks(lesson: Lesson, history: Lesson[]): Block[] {
  * The review as Block Kit: title and CEFR bars when judged up front, then the summary, focus points and next lesson.
  * The long part goes in an attachment, which Slack folds behind "Show more" after a few lines.
  */
-export function reviewSlackMessage(lesson: Lesson, history: Lesson[] = []): SlackMessage {
+export function reviewSlackMessage(
+  lesson: Lesson,
+  { history = [], learner }: { history?: Lesson[]; learner?: string } = {},
+): SlackMessage {
   if (!lesson.feedback) throw new Error("投稿する振り返りがありません。");
   const feedback = mapFeedbackProse(lesson.feedback, plainTimes);
   const date = new Date(lesson.date).toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" });
@@ -113,7 +116,7 @@ export function reviewSlackMessage(lesson: Lesson, history: Lesson[] = []): Slac
     // Shown in notifications and by clients that cannot render blocks.
     text: slackEscape(slackShareText(lesson)),
     blocks: [
-      { type: "header", text: plain(`📝 ${feedback.title}`, 150) },
+      { type: "header", text: plain(`📝 ${learner ? `${learner}の振り返り: ` : ""}${feedback.title}`, 150) },
       {
         type: "context",
         elements: [{ type: "mrkdwn", text: slackEscape(`DMM英会話 · ${date} · ${lesson.teacher}先生`) }],
@@ -176,13 +179,19 @@ export function disableSlackDelivery(root: string): void {
 export class SlackReviewPost implements ReviewChannel {
   readonly key = "slack";
   readonly label = "振り返りのSlack投稿";
-  constructor(private readonly store: Pick<Store, "root" | "library">) {}
+  constructor(private readonly store: Pick<Store, "root" | "library" | "credentials">) {}
   enabledAt() {
     return readSlackSettings(this.store.root)?.enabledAt;
   }
   async send(lesson: Lesson) {
     const settings = readSlackSettings(this.store.root);
     if (!settings) throw new Error("Slack配信が設定されていません。");
-    await postSlack(settings.webhookUrl, reviewSlackMessage(lesson, this.store.library.lessons));
+    await postSlack(
+      settings.webhookUrl,
+      reviewSlackMessage(lesson, {
+        history: this.store.library.lessons,
+        learner: this.store.credentials().displayName,
+      }),
+    );
   }
 }

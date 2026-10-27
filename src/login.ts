@@ -227,12 +227,13 @@ export async function setupLogin(
     for (const lesson of page.lessons) store.merge(lesson);
     const bookingId = page.lessons.find((l) => l.bookingId)?.bookingId;
     if (bookingId) await client.api(`/api/lesson_bookings/${bookingId}/combined`);
-    else await client.currentUser();
+    const displayName = await client.displayName();
     // Replace, rather than merge, credentials so a previous account's token cannot survive setup.
     atomicJson(store.path("credentials.json"), {
       ...credentials,
       savedAt: new Date().toISOString(),
       email: identity.email,
+      displayName,
     });
     store.save();
     report("ログイン情報を保存しました。");

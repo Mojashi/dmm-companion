@@ -86,13 +86,21 @@ test("CEFRは6マスのバーで観点ごとに並べ、直近の平均より半
     "2026-09-11T15:30:00.000Z",
     judged(["B2", "B1", "A2+", "B1+", "B1", "B1"], { fluency: "Use <fillers> & pauses" }),
   );
-  const json = JSON.stringify(reviewSlackMessage(today, [...history, today]));
+  const json = JSON.stringify(reviewSlackMessage(today, { history: [...history, today] }));
   expect(json).toContain("🎯 CEFRの目安  B1+");
   expect(json).toContain("🟩🟩🟩🟩⬜⬜  表現の幅 *B2* ⬆️");
   expect(json).toContain("🟩🟩🟨⬜⬜⬜  流暢さ *A2+* ⬇️");
   expect(json).toContain("🟩🟩🟩⬜⬜⬜  正確さ *B1*\\n");
   expect(json).toContain("次の一歩: 流暢さ*\\nUse &lt;fillers&gt; &amp; pauses");
   expect(json).toContain("直近2回の平均との比較");
+});
+
+test("学習者の名前があれば見出しに載せる", () => {
+  const today = lesson("today", "2026-09-11T15:30:00.000Z");
+  expect(JSON.stringify(reviewSlackMessage(today, { learner: "Akihiro" }).blocks)).toContain(
+    "📝 Akihiroの振り返り: Practice",
+  );
+  expect(JSON.stringify(reviewSlackMessage(today).blocks)).toContain('"📝 Practice"');
 });
 
 test("SlackのWebhook以外のURLは保存せず、テスト投稿に失敗した設定も保存しない", async () => {

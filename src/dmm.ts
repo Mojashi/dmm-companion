@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import {
   type ApiEnvelope,
+  type ApiObject,
   bookingUuid,
   type Credentials,
   duration,
@@ -120,6 +121,11 @@ export function parseTracks(envelope: ApiEnvelope): Track[] {
       };
     });
 }
+export function parseDisplayName(envelope: ApiEnvelope): string | undefined {
+  const name = (envelope.data as ApiObject | undefined)?.display_name;
+  return typeof name === "string" && name.trim() ? name.trim() : undefined;
+}
+
 function identifier(value: unknown): string {
   const id = string(value);
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new Error("DMM APIに不正なIDが含まれています。");
@@ -169,6 +175,10 @@ export class DmmClient {
     return (
       await this.get(new URL("https://api.engoo.com/api/users/current"), this.apiHeaders())
     ).json() as Promise<ApiEnvelope>;
+  }
+  /** The learner's display name from their profile, or undefined when it is not set. */
+  async displayName(): Promise<string | undefined> {
+    return parseDisplayName(await this.currentUser());
   }
   private apiHeaders(): Record<string, string> {
     const headers: Record<string, string> = { Origin: "https://eikaiwa.dmm.com", Accept: "application/json" };
