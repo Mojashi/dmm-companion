@@ -79,6 +79,10 @@ function context() {
       return ids.length;
     },
     idle: async () => {},
+    reviewed: [] as ((l: Lesson) => void)[],
+    onReviewed(listener: (l: Lesson) => void) {
+      this.reviewed.push(listener);
+    },
   };
   const delivery = {
     deliver: async (l: Lesson) => {
@@ -280,6 +284,23 @@ test("Slack投稿はメールと別に記録し、Slackの失敗でメールを�
   expect(c.posted).toEqual(["ready", "ready"]);
   expect(restarted.state.jobs.ready?.slack?.deliveredAt).toBeDefined();
   expect(restarted.state.error).toBeUndefined();
+});
+
+test("手動で分析した振り返りは、録音公開の待ち時間や次の定期確認を待たずに完成した時点で配信する", async () => {
+  const c = context();
+  c.slack.enabledAt = () => "2026-09-12T00:00:00.000Z";
+  c.store.merge(lesson("manual", "2026-09-12T01:50:00.000Z"));
+  const automatic = c.automatic();
+  const stop = automatic.start();
+  await Bun.sleep(0);
+  expect(c.delivered).toEqual([]);
+  c.store.lesson("manual").feedback = feedback;
+  for (const listener of c.worker.reviewed) listener(c.store.lesson("manual"));
+  await Bun.sleep(0);
+  stop();
+  expect(c.delivered).toEqual(["manual"]);
+  expect(c.posted).toEqual(["manual"]);
+  expect(automatic.state.jobs.manual?.slack?.deliveredAt).toBeDefined();
 });
 
 test("通知のクリックで指定レッスンを開き、パス中のシェル構文を実行させない", async () => {

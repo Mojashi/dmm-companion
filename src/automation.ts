@@ -43,7 +43,7 @@ export type ReviewDelivery = {
   deliver(lesson: Lesson): Promise<{ file: string }>;
   alert(message: string): Promise<void>;
 };
-type AutomationWorker = Pick<Companion, "status" | "sync" | "enqueue" | "idle">;
+type AutomationWorker = Pick<Companion, "status" | "sync" | "enqueue" | "idle" | "onReviewed">;
 
 export function readAutomationConfig(path: string): AutomationConfig | undefined {
   return existsSync(path) ? automationConfigSchema.parse(JSON.parse(readFileSync(path, "utf8"))) : undefined;
@@ -59,8 +59,19 @@ export function reviewIsDue(lesson: Lesson, config: AutomationConfig, now: numbe
   );
 }
 
+/** A finished review goes out right away, without the wait for the recording that generation needs. */
+export function reviewIsDeliverable(lesson: Lesson, config: AutomationConfig): boolean {
+  return (
+    lesson.attended &&
+    Boolean(lesson.bookingId) &&
+    Boolean(lesson.feedback) &&
+    Date.parse(lesson.date) >= Date.parse(config.since)
+  );
+}
+
 export class AutomaticReviews {
   private running = false;
+  private delivering: Promise<void> = Promise.resolve();
   readonly state: AutomationState;
   constructor(
     private readonly store: Store,
@@ -81,14 +92,20 @@ export class AutomaticReviews {
       ...this.state,
     };
   }
+  /** Checks DMM for new lessons on a timer, and delivers each review as soon as the worker finishes it. */
   start(): () => void {
-    const tick = () => {
-      void this.run().catch((error) => {
-        this.state.error = safeError(error);
-        this.save();
-        console.error(`自動振り返り: ${this.state.error}`);
-      });
+    const failed = (error: unknown) => {
+      this.state.error = safeError(error);
+      this.save();
+      console.error(`自動振り返り: ${this.state.error}`);
     };
+    const tick = () => {
+      void this.run().catch(failed);
+    };
+    this.worker.onReviewed(() => {
+      const config = readAutomationConfig(this.store.path("automation.json"));
+      if (config?.enabled) this.deliverReviews(config).catch(failed);
+    });
     tick();
     const timer = setInterval(tick, 30_000);
     return () => clearInterval(timer);
@@ -143,7 +160,13 @@ export class AutomaticReviews {
       this.save();
     }
   }
-  private async deliverReviews(config: AutomationConfig) {
+  /** One delivery pass at a time, so a review finishing during a timed run is never sent twice. */
+  private deliverReviews(config: AutomationConfig): Promise<void> {
+    const pass = this.delivering.then(() => this.deliverPass(config));
+    this.delivering = pass.catch(() => {});
+    return pass;
+  }
+  private async deliverPass(config: AutomationConfig) {
     await this.deliverEach(
       config,
       "振り返りの配信",
@@ -176,7 +199,7 @@ export class AutomaticReviews {
     eligible: (job: ReviewJob) => boolean = () => true,
   ) {
     const ready = this.store.library.lessons
-      .filter((lesson) => reviewIsDue(lesson, config, this.now()) && lesson.feedback)
+      .filter((lesson) => reviewIsDeliverable(lesson, config))
       .filter((lesson) => {
         const job = this.job(lesson.id);
         if (!eligible(job)) return false;

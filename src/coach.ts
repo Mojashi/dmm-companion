@@ -77,6 +77,7 @@ const catchingUpAtOnce = 4;
 export class Companion {
   private working = false;
   private readonly queue: string[] = [];
+  private readonly reviewedListeners: ((lesson: Lesson) => void)[] = [];
   status = { busy: false, message: "", error: "" };
   constructor(
     readonly store: Store,
@@ -104,6 +105,10 @@ export class Companion {
       this.status.message = "";
       if (this.queue.length) void this.drain();
     }
+  }
+  /** Calls back each time a lesson's review is finished, with its CEFR estimate and metrics attempted. */
+  onReviewed(listener: (lesson: Lesson) => void): void {
+    this.reviewedListeners.push(listener);
   }
   private readonly report = (message: string) => {
     this.status.message = message;
@@ -207,6 +212,7 @@ export class Companion {
         if (lesson.phase === "done") {
           await this.assess(lesson);
           await this.measure(lesson);
+          for (const listener of this.reviewedListeners) listener(lesson);
         }
       }
     } finally {
