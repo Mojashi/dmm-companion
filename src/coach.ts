@@ -1,6 +1,13 @@
 import { assessSpeaking } from "./assessment";
-import { prepareAudio } from "./audio";
+import { conversationClips, prepareAudio } from "./audio";
 import { eachConcurrently } from "./concurrency";
+import {
+  answerConversationQuestion,
+  type ConversationAI,
+  type ConversationClips,
+  type ConversationTask,
+  createConversation,
+} from "./conversation";
 import { SessionExpired } from "./dmm";
 import { type Feedback, feedbackSchema, type Lesson, safeError } from "./domain";
 import { agyResponse, askGemini } from "./gemini";
@@ -79,6 +86,7 @@ export class Companion {
   private readonly queue: string[] = [];
   private readonly reviewedListeners: ((lesson: Lesson) => void)[] = [];
   status = { busy: false, message: "", error: "" };
+  conversationTask?: ConversationTask;
   constructor(
     readonly store: Store,
     /** Writes the review from the whole lesson recording. */
@@ -86,7 +94,56 @@ export class Companion {
     private readonly savedLogin: SavedLogin,
     /** Transcribes the learner's voice verbatim for speaking metrics; a fast model is enough. */
     readonly transcriptionModel: string,
+    private readonly conversationTools: { ask: ConversationAI; clips: ConversationClips } = {
+      ask: askGemini,
+      clips: conversationClips,
+    },
   ) {}
+  /** Shares the existing work lock so recording preparation and AI jobs cannot overwrite each other. */
+  startConversation(id: string, question?: { segmentId: string; text: string }): void {
+    if (this.working) throw new Error("現在の処理が終わってから実行してください。");
+    const lesson = this.store.lesson(id);
+    if (!lesson.attended) throw new Error("未受講のレッスンには会話ログを作成できません。");
+    this.working = true;
+    const task: ConversationTask = { lessonId: id, segmentId: question?.segmentId, busy: true, error: "" };
+    this.conversationTask = task;
+    this.status = {
+      busy: true,
+      message: question ? "会話についての回答を作成中" : "会話ログを作成中",
+      error: "",
+    };
+    void (async () => {
+      try {
+        if (question) {
+          await answerConversationQuestion(
+            this.store,
+            lesson,
+            question.segmentId,
+            question.text,
+            this.model,
+            this.conversationTools.ask,
+          );
+        } else {
+          await this.signedIn(() => prepareAudio(this.store, lesson));
+          await createConversation(
+            this.store,
+            lesson,
+            this.transcriptionModel,
+            this.conversationTools.ask,
+            this.conversationTools.clips,
+          );
+        }
+      } catch (error) {
+        task.error = safeError(error);
+      } finally {
+        task.busy = false;
+        this.working = false;
+        this.status.busy = false;
+        this.status.message = "";
+        void this.drain();
+      }
+    })();
+  }
   async setup(identity: LoginIdentity): Promise<void> {
     if (this.working) throw new Error("現在の処理が終わってからログインしてください。");
     this.working = true;

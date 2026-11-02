@@ -136,3 +136,47 @@ export async function speakerAudio(store: Store, lesson: Lesson, role: Track["ro
   renameSync(temp, file);
   return file;
 }
+
+/** Short clips keep the speech model's estimated timestamps close to the actual recording timeline. */
+export async function conversationClips(store: Store, lesson: Lesson, role: "Teacher" | "Student") {
+  if (!lesson.audio) throw new Error("録音がありません。");
+  const stream = await speakerAudio(store, lesson, role);
+  const duration = Number(
+    await command(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", stream]),
+  );
+  if (!Number.isFinite(duration) || duration <= 0) throw new Error("話者の録音の長さを確認できません。");
+  const length = Math.min(lesson.audio.seconds, duration);
+  const clips: { file: string; start: number; seconds: number }[] = [];
+  for (let start = 0; start < length; start += 90) {
+    const seconds = Math.min(90, length - start);
+    const dir = store.path("work", lesson.id, `conversation-${role}-${start}`);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const file = `${dir}/audio.mp3`;
+    if (!existsSync(file)) {
+      const temp = `${file}.part.mp3`;
+      await command([
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ss",
+        String(start),
+        "-i",
+        stream,
+        "-t",
+        String(seconds),
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-b:a",
+        "32k",
+        temp,
+      ]);
+      renameSync(temp, file);
+    }
+    clips.push({ file, start, seconds });
+  }
+  return clips;
+}
