@@ -44,6 +44,7 @@ test("会話ログと質問APIは認証・入力・重複実行を検証し、�
   let calls = 0;
   const ask: ConversationAI = async (request) => {
     calls++;
+    if (request.schema.name === "conversation-answer") expect(request.model).toBe("gemini-budget");
     await gate.promise;
     if (fail) throw new Error("AI unavailable");
     return JSON.stringify({
@@ -54,9 +55,9 @@ test("会話ログと質問APIは認証・入力・重複実行を検証し、�
           : { segments: [{ start: 1, end: 2, text: "hidden-dialogue" }] },
     });
   };
-  const companion = new Companion(store, "gemini-test", noSavedLogin, "gemini-test", {
+  const companion = new Companion(store, "gemini-test", noSavedLogin, "gemini-budget", {
     ask,
-    clips: async () => [{ file: "cached.mp3", start: 0, seconds: 10 }],
+    clips: async () => [{ file: store.path("work", "test", "student.mp3"), start: 0, seconds: 10 }],
   });
   const { server, url } = serve(companion, 0);
   cleanups.push(() => {
@@ -115,6 +116,11 @@ test("会話ログと質問APIは認証・入力・重複実行を検証し、�
   expect(
     readConversation(store, "test")?.segments.find((s) => s.id === "teacher-0-0")?.questions,
   ).toHaveLength(2);
+  const beforeDuplicate = calls;
+  const repeated = await post(`${path}/teacher-0-0/questions`, { question: "More?" });
+  expect(repeated.status).toBe(200);
+  expect(await repeated.json()).toMatchObject({ reused: true });
+  expect(calls).toBe(beforeDuplicate);
 });
 
 test("ローカルAPIの認証・Origin検証と音声Range配信", async () => {

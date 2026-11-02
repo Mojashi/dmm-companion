@@ -176,6 +176,21 @@ export async function conversationClips(store: Store, lesson: Lesson, role: "Tea
       ]);
       renameSync(temp, file);
     }
+    const silence = await command([
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      file,
+      "-af",
+      "silencedetect=noise=-60dB:d=0.25,ametadata=mode=print:file=-",
+      "-f",
+      "null",
+      "-",
+    ]);
+    const from = /lavfi\.silence_start=([\d.]+)/.exec(silence)?.[1];
+    if (from !== undefined && Number(from) < 0.05 && !silence.includes("lavfi.silence_end=")) continue;
     clips.push({ file, start, seconds });
   }
   return clips;

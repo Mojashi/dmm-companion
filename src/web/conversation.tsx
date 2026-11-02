@@ -25,6 +25,7 @@ export function LessonConversation({
   const [filter, setFilter] = useState("all");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
+  const [wholeLesson, setWholeLesson] = useState(false);
   const [submitted, setSubmitted] = useState<{ segmentId: string; question: string; count: number }>();
   const sendingRef = useRef(false);
   const panel = useRef<HTMLElement>(null);
@@ -65,6 +66,7 @@ export function LessonConversation({
     setSubmitted(undefined);
   }, [snapshot, submitted]);
   const conversation = snapshot?.conversation;
+  const hasUntimed = conversation?.segments.some((s) => s.start === null);
   const selected = conversation?.segments.find((s) => s.id === selectedId);
   const active = sending || Boolean(snapshot?.task?.busy);
   const disabled = busy || active;
@@ -79,12 +81,13 @@ export function LessonConversation({
     setSending(true);
     setFailure("");
     try {
-      await request(target, {
+      const result = await request<{ reused?: boolean }>(target, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       setSnapshot(await request<ConversationSnapshot>(path));
+      return result;
     } catch (error) {
       setFailure(error instanceof Error ? error.message : String(error));
     } finally {
@@ -94,6 +97,7 @@ export function LessonConversation({
   }
   function select(id: string) {
     setSelectedId(id);
+    setWholeLesson(false);
     setFailure("");
     requestAnimationFrame(() => {
       document.getElementById(`conversation-${lessonId}-${id}`)?.scrollIntoView({ block: "nearest" });
@@ -101,10 +105,16 @@ export function LessonConversation({
       input.current?.focus({ preventScroll: true });
     });
   }
-  function ask() {
+  async function ask() {
     if (!selected || !draft.trim() || disabled || sendingRef.current) return;
     setSubmitted({ segmentId: selected.id, question: draft, count: selected.questions.length });
-    void post(`${path}/${selected.id}/questions`, { question: draft });
+    const id = selected.id;
+    const result = await post(`${path}/${id}/questions`, { question: draft, wholeLesson });
+    if (result) setWholeLesson(false);
+    if (result?.reused) {
+      setDrafts((current) => ({ ...current, [id]: "" }));
+      setSubmitted(undefined);
+    }
   }
   return (
     <section className="conversation" aria-label="会話と質問">
@@ -124,7 +134,7 @@ export function LessonConversation({
           <h3>会話ログ</h3>
           <p>
             {available
-              ? "講師とあなたの会話を録音から書き起こします。"
+              ? "保存済みの文字起こしを利用し、不足分だけ作成します。"
               : "録音のあるレッスンで利用できます。"}
           </p>
           {available && (
@@ -145,6 +155,27 @@ export function LessonConversation({
             <span className="eyebrow">LESSON DIALOGUE</span>
             <span>{conversation.segments.length} 発言</span>
           </div>
+          {(conversation.pendingRoles?.length ?? 0) > 0 && (
+            <div className="conversation-addition">
+              <button
+                type="button"
+                className="outline-button"
+                disabled={disabled || !available}
+                onClick={() => void post(path, {})}
+              >
+                {active ? "不足分を作成中…" : "不足分の会話を追加"}
+              </button>
+              <span>追加分のみAIを利用します</span>
+            </div>
+          )}
+          {hasUntimed && (
+            <details className="conversation-sources">
+              <summary>時刻のない文字起こしを含みます</summary>
+              <p>
+                保存済みの本文を再利用しています。時刻のない発話は本文順に表示し、再生位置は推定しません。
+              </p>
+            </details>
+          )}
           <fieldset className="conversation-filters" aria-label="会話の表示">
             {[
               ["all", "すべて"],
@@ -162,7 +193,7 @@ export function LessonConversation({
             ))}
           </fieldset>
           <div className="conversation-body">
-            <ol className="conversation-timeline" aria-label="時系列の会話">
+            <ol className="conversation-timeline" aria-label={hasUntimed ? "保存済みの会話" : "時系列の会話"}>
               {conversation.segments
                 .filter((s) => filter === "all" || s.role === filter)
                 .map((s) => (
@@ -173,14 +204,18 @@ export function LessonConversation({
                   >
                     <div className="conversation-turn-meta">
                       <span>{s.role === "Student" ? "あなた" : teacher}</span>
-                      <button
-                        type="button"
-                        className="timestamp"
-                        aria-label={`${clock(s.start)}の音声を再生`}
-                        onClick={() => play(s.start, s.end)}
-                      >
-                        ▷ {clock(s.start)}
-                      </button>
+                      {s.start !== null && (
+                        <button
+                          type="button"
+                          className="timestamp"
+                          aria-label={`${clock(s.start)}の音声を再生`}
+                          onClick={() => {
+                            if (s.start !== null) play(s.start, s.end ?? undefined);
+                          }}
+                        >
+                          ▷ {clock(s.start)}
+                        </button>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -202,7 +237,8 @@ export function LessonConversation({
                 <>
                   <blockquote>
                     <span>
-                      {selected.role === "Student" ? "あなた" : teacher} · {clock(selected.start)}
+                      {selected.role === "Student" ? "あなた" : teacher}
+                      {selected.start !== null && ` · ${clock(selected.start)}`}
                     </span>
                     <p>{selected.text}</p>
                   </blockquote>
@@ -234,7 +270,7 @@ export function LessonConversation({
                                       select(id);
                                     }}
                                   >
-                                    {clock(reference.start)}{" "}
+                                    {reference.start !== null ? `${clock(reference.start)} ` : ""}
                                     {reference.role === "Student" ? "あなた" : teacher}
                                   </button>
                                 )
@@ -266,7 +302,7 @@ export function LessonConversation({
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
-                      ask();
+                      void ask();
                     }}
                   >
                     <label htmlFor={`conversation-question-${lessonId}`}>質問</label>
@@ -288,10 +324,18 @@ export function LessonConversation({
                           !event.nativeEvent.isComposing
                         ) {
                           event.preventDefault();
-                          ask();
+                          void ask();
                         }
                       }}
                     />
+                    <label className="conversation-scope">
+                      <input
+                        type="checkbox"
+                        checked={wholeLesson}
+                        onChange={(event) => setWholeLesson(event.currentTarget.checked)}
+                      />
+                      今回だけレッスン全体を参照（送信量が増えます）
+                    </label>
                     <button className="primary-button" type="submit" disabled={disabled || !draft.trim()}>
                       質問する ↗
                     </button>

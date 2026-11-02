@@ -3,9 +3,28 @@ import { z } from "zod";
 import { CommandError, command } from "./process";
 import { atomicJson } from "./store";
 
+export class AiQuotaExceeded extends Error {
+  constructor() {
+    super("AIの利用上限に達しました。リセット後に再試行してください。完了した処理は保存されています。");
+  }
+}
+
+export function isQuotaError(error: unknown): boolean {
+  const text =
+    error instanceof CommandError
+      ? error.stderr + error.stdout
+      : error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "";
+  return /individual quota|quota (?:reached|exhausted)|RESOURCE_EXHAUSTED.*quota/i.test(text);
+}
+
 /** Unwraps agy's --output-format json envelope into the model's JSON answer. */
 export function agyResponse(stdout: string): unknown {
-  const envelope = JSON.parse(stdout) as { status?: string; response?: unknown };
+  const envelope = JSON.parse(stdout) as { status?: string; response?: unknown; error?: unknown };
+  if (envelope.status !== "SUCCESS" && isQuotaError(envelope.error)) throw new AiQuotaExceeded();
   if (envelope.status !== "SUCCESS")
     throw new Error("agyの音声分析が完了しませんでした。analysesの実行ログを確認してください。");
   return typeof envelope.response === "string" ? jsonIn(envelope.response) : envelope.response;
@@ -45,6 +64,7 @@ export async function askGemini(request: {
   schema: { name: string; shape: z.ZodType };
   workDir: string;
   log: string;
+  attempts?: number;
 }): Promise<string> {
   if (!request.model.startsWith("gemini-")) throw new Error("音声分析にはGeminiモデルを指定してください。");
   mkdirSync(request.workDir, { recursive: true, mode: 0o700 });
@@ -67,17 +87,20 @@ export async function askGemini(request: {
       ],
       { cwd: request.workDir, timeout: 16 * 60_000, log: request.log },
     );
+  const attempts = Math.max(1, Math.min(4, request.attempts ?? 4));
   for (let attempt = 1; ; attempt++) {
     try {
       const stdout = await run();
+      if (isQuotaError(errorOf(stdout))) throw new AiQuotaExceeded();
       // agy can also exit 0 with an ERROR envelope when the connection dropped mid-answer.
-      if (attempt < 4 && transient(errorOf(stdout))) {
+      if (attempt < attempts && transient(errorOf(stdout))) {
         await Bun.sleep(attempt * 20_000);
         continue;
       }
       return stdout;
     } catch (error) {
-      if (attempt >= 4 || !transient(error)) throw error;
+      if (error instanceof AiQuotaExceeded || isQuotaError(error)) throw new AiQuotaExceeded();
+      if (attempt >= attempts || !transient(error)) throw error;
       await Bun.sleep(attempt * 20_000);
     }
   }

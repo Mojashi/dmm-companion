@@ -1609,6 +1609,35 @@ footer {
   color: var(--muted);
   font-size: 10px;
 }
+.conversation-addition {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.conversation-sources {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.9;
+}
+.conversation-sources summary {
+  cursor: pointer;
+}
+.conversation-question .conversation-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.conversation-scope input {
+  accent-color: var(--green);
+}
 .conversation-filters,
 .conversation-prompts,
 .conversation-references {

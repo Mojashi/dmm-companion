@@ -26,6 +26,7 @@ const { values, positionals } = parseArgs({
     port: { type: "string", default: "4317" },
     model: { type: "string", default: "gemini-3.8-flash-high" },
     "transcribe-model": { type: "string", default: "gemini-3.8-flash-low" },
+    "question-model": { type: "string", default: "gemini-3.8-flash-low" },
     "no-open": { type: "boolean" },
     full: { type: "boolean" },
     since: { type: "string" },
@@ -60,6 +61,7 @@ if (values.help) {
   --port NUMBER     ローカルポート (既定: 4317)
   --model NAME      振り返り・CEFR判定のGeminiモデル (既定: gemini-3.8-flash-high)
   --transcribe-model NAME  発話の書き起こしのGeminiモデル (既定: gemini-3.8-flash-low)
+  --question-model NAME   会話への質問のGeminiモデル (既定: gemini-3.8-flash-low)
   --no-open        ページを自動で開かない
   --since DATE     自動生成の開始日 (例: 2026-09-01、既定: 初回設定の7日前)
   --interval N     自動確認の間隔 (分、既定: 10)
@@ -103,6 +105,9 @@ async function main(): Promise<void> {
     throw new Error("portは0〜65535の整数で指定してください。");
   if (!values.model?.startsWith("gemini-")) throw new Error("--modelにGeminiモデルを指定してください。");
   const transcriptionModel = values["transcribe-model"];
+  const questionModel = values["question-model"];
+  if (!questionModel?.startsWith("gemini-"))
+    throw new Error("--question-modelにGeminiモデルを指定してください。");
   if (!transcriptionModel?.startsWith("gemini-"))
     throw new Error("--transcribe-modelにGeminiモデルを指定してください。");
   if (values.lesson && !/^[\w-]+$/.test(values.lesson)) throw new Error("レッスンIDが不正です。");
@@ -129,7 +134,7 @@ async function main(): Promise<void> {
       if (values.since && !/^\d{4}-\d{2}-\d{2}$/.test(values.since))
         throw new Error("--sinceはYYYY-MM-DDで指定してください。");
       const config = await enableAutomaticReviews(
-        { root, binary: process.execPath, model: values.model, transcriptionModel, port },
+        { root, binary: process.execPath, model: values.model, transcriptionModel, questionModel, port },
         {
           since: values.since ? new Date(`${values.since}T00:00:00+09:00`).toISOString() : undefined,
           intervalMinutes: values.interval ? Number(values.interval) : undefined,
@@ -253,7 +258,14 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => process.exit(130));
   process.on("SIGTERM", () => process.exit(143));
   const store = new Store(root);
-  const companion = new Companion(store, values.model, new KeychainLogin(root), transcriptionModel);
+  const companion = new Companion(
+    store,
+    values.model,
+    new KeychainLogin(root),
+    transcriptionModel,
+    undefined,
+    questionModel,
+  );
   const automatic = new AutomaticReviews(store, companion, new MacReviewDelivery(store, process.execPath), [
     new GmailReviewMail(store),
     new SlackReviewPost(store),

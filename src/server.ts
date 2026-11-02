@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { AutomaticReviews } from "./automation";
 import type { Companion } from "./coach";
-import { readConversation } from "./conversation";
+import { canReuseAnswer, readConversation } from "./conversation";
 import { safeError } from "./domain";
 import index from "./web/index.html";
 
@@ -129,14 +129,15 @@ export function serve(companion: Companion, port: number, automatic?: AutomaticR
           if (request.method === "POST") {
             if (companion.status.busy)
               return Response.json({ error: "現在の処理が終わってから実行してください。" }, { status: 409 });
-            let question: { segmentId: string; text: string } | undefined;
+            let question: { segmentId: string; text: string; wholeLesson?: boolean } | undefined;
             if (segmentId) {
-              const body = (await request.json()) as { question?: unknown } | null;
+              const body = (await request.json()) as { question?: unknown; wholeLesson?: unknown } | null;
               if (
                 !body ||
                 typeof body.question !== "string" ||
                 !body.question.trim() ||
-                body.question.trim().length > 2000
+                body.question.trim().length > 2000 ||
+                (body.wholeLesson !== undefined && typeof body.wholeLesson !== "boolean")
               )
                 return Response.json({ error: "質問は1〜2,000文字で入力してください。" }, { status: 400 });
               const conversation = readConversation(store, id);
@@ -144,7 +145,9 @@ export function serve(companion: Companion, port: number, automatic?: AutomaticR
                 return Response.json({ error: "先に会話ログを作成してください。" }, { status: 409 });
               if (!conversation.segments.some((s) => s.id === segmentId))
                 return Response.json({ error: "発言が見つかりません。" }, { status: 404 });
-              question = { segmentId, text: body.question.trim() };
+              if (canReuseAnswer(conversation, segmentId, body.question, body.wholeLesson === true))
+                return Response.json({ ok: true, reused: true });
+              question = { segmentId, text: body.question.trim(), wholeLesson: body.wholeLesson === true };
             }
             companion.startConversation(id, question);
             return Response.json({ ok: true }, { status: 202 });

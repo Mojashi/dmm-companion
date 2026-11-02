@@ -98,9 +98,10 @@ export class Companion {
       ask: askGemini,
       clips: conversationClips,
     },
+    readonly questionModel: string = transcriptionModel,
   ) {}
   /** Shares the existing work lock so recording preparation and AI jobs cannot overwrite each other. */
-  startConversation(id: string, question?: { segmentId: string; text: string }): void {
+  startConversation(id: string, question?: { segmentId: string; text: string; wholeLesson?: boolean }): void {
     if (this.working) throw new Error("現在の処理が終わってから実行してください。");
     const lesson = this.store.lesson(id);
     if (!lesson.attended) throw new Error("未受講のレッスンには会話ログを作成できません。");
@@ -120,8 +121,9 @@ export class Companion {
             lesson,
             question.segmentId,
             question.text,
-            this.model,
+            this.questionModel,
             this.conversationTools.ask,
+            question.wholeLesson,
           );
         } else {
           await this.signedIn(() => prepareAudio(this.store, lesson));

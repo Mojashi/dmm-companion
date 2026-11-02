@@ -13,6 +13,7 @@ export type BackgroundOptions = {
   binary: string;
   model: string;
   transcriptionModel: string;
+  questionModel?: string;
   port: number;
   path: string;
 };
@@ -30,6 +31,8 @@ export function launchAgent(options: BackgroundOptions): string {
     options.model,
     "--transcribe-model",
     options.transcriptionModel,
+    "--question-model",
+    options.questionModel ?? "gemini-3.8-flash-low",
     "--port",
     String(options.port),
   ];
