@@ -81,13 +81,13 @@ export function LessonConversation({
     setSending(true);
     setFailure("");
     try {
-      const result = await request<{ reused?: boolean }>(target, {
+      await request(target, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       setSnapshot(await request<ConversationSnapshot>(path));
-      return result;
+      return true;
     } catch (error) {
       setFailure(error instanceof Error ? error.message : String(error));
     } finally {
@@ -111,10 +111,6 @@ export function LessonConversation({
     const id = selected.id;
     const result = await post(`${path}/${id}/questions`, { question: draft, wholeLesson });
     if (result) setWholeLesson(false);
-    if (result?.reused) {
-      setDrafts((current) => ({ ...current, [id]: "" }));
-      setSubmitted(undefined);
-    }
   }
   return (
     <section className="conversation" aria-label="会話と質問">

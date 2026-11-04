@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { AutomaticReviews } from "./automation";
 import type { Companion } from "./coach";
-import { canReuseAnswer, readConversation } from "./conversation";
+import { readConversation } from "./conversation";
 import { safeError } from "./domain";
 import index from "./web/index.html";
 
@@ -145,8 +145,6 @@ export function serve(companion: Companion, port: number, automatic?: AutomaticR
                 return Response.json({ error: "先に会話ログを作成してください。" }, { status: 409 });
               if (!conversation.segments.some((s) => s.id === segmentId))
                 return Response.json({ error: "発言が見つかりません。" }, { status: 404 });
-              if (canReuseAnswer(conversation, segmentId, body.question, body.wholeLesson === true))
-                return Response.json({ ok: true, reused: true });
               question = { segmentId, text: body.question.trim(), wholeLesson: body.wholeLesson === true };
             }
             companion.startConversation(id, question);

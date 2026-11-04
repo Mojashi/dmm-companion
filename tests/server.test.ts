@@ -116,11 +116,14 @@ test("会話ログと質問APIは認証・入力・重複実行を検証し、�
   expect(
     readConversation(store, "test")?.segments.find((s) => s.id === "teacher-0-0")?.questions,
   ).toHaveLength(2);
-  const beforeDuplicate = calls;
+  const beforeRepeat = calls;
   const repeated = await post(`${path}/teacher-0-0/questions`, { question: "More?" });
-  expect(repeated.status).toBe(200);
-  expect(await repeated.json()).toMatchObject({ reused: true });
-  expect(calls).toBe(beforeDuplicate);
+  expect(repeated.status).toBe(202);
+  await companion.idle();
+  expect(calls).toBe(beforeRepeat + 1);
+  expect(
+    readConversation(store, "test")?.segments.find((s) => s.id === "teacher-0-0")?.questions,
+  ).toHaveLength(3);
 });
 
 test("ローカルAPIの認証・Origin検証と音声Range配信", async () => {

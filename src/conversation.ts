@@ -4,7 +4,7 @@ import { z } from "zod";
 import { conversationClips } from "./audio";
 import type { Lesson } from "./domain";
 import { agyResponse, askGemini } from "./gemini";
-import { atomicJson, hash, type Store } from "./store";
+import { atomicJson, type Store } from "./store";
 import {
   ensureSpeech,
   readSpeech,
@@ -27,7 +27,6 @@ const questionSchema = z.object({
   model: z.string(),
   createdAt: z.string(),
   scope: z.enum(["nearby", "lesson"]).optional(),
-  fingerprint: z.string().optional(),
 });
 const segmentSchema = speechSegmentSchema.extend({
   id: z.string(),
@@ -113,29 +112,6 @@ export async function createConversation(
   return conversation;
 }
 
-function conversationFingerprint(conversation: Conversation): string {
-  return hash(
-    JSON.stringify(
-      conversation.segments.map(({ id, role, start, end, text }) => ({ id, role, start, end, text })),
-    ),
-  );
-}
-
-export function canReuseAnswer(
-  conversation: Conversation,
-  segmentId: string,
-  question: string,
-  wholeLesson = false,
-): boolean {
-  const last = conversation.segments.find((s) => s.id === segmentId)?.questions.at(-1);
-  return Boolean(
-    last &&
-      last.question === question.trim() &&
-      last.scope === (wholeLesson ? "lesson" : "nearby") &&
-      last.fingerprint === conversationFingerprint(conversation),
-  );
-}
-
 export function questionContext(
   conversation: Conversation,
   teacher: string,
@@ -198,7 +174,6 @@ export async function answerConversationQuestion(
 ): Promise<void> {
   const conversation = readConversation(store, lesson.id);
   if (!conversation) throw new Error("先に会話ログを作成してください。");
-  if (canReuseAnswer(conversation, segmentId, question, wholeLesson)) return;
   const context = questionContext(conversation, lesson.teacher, segmentId, question, wholeLesson);
   const response = await ask({
     prompt: `あなたは日本人受講者の英会話の復習を助けるコーチです。次のJSONのquestionに日本語で答えてください。
@@ -223,7 +198,6 @@ ${JSON.stringify(context)}`,
     id: randomUUID(),
     question: context.question,
     scope: context.scope as "nearby" | "lesson",
-    fingerprint: conversationFingerprint(conversation),
     answer,
     model,
     createdAt: new Date().toISOString(),

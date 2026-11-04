@@ -6,7 +6,6 @@ import {
   answerConversationQuestion,
   type Conversation,
   type ConversationAI,
-  canReuseAnswer,
   createConversation,
   parseUtterances,
   questionContext,
@@ -350,25 +349,21 @@ test("質問は近傍の最大6000文字に絞り、全文参照は明示した�
   expect(all.omittedSegments).toBe(0);
 });
 
-test("直前と同じ質問は再利用し、追加質問や参照範囲が変われば再利用しない", async () => {
+test("同じ質問を再送した場合も新しい回答を作って履歴へ追加する", async () => {
   const { store, lesson } = fixture();
   atomicJson(store.path("analyses", "lesson.conversation.json"), document());
   let calls = 0;
-  const ask: ConversationAI = async () => {
+  const ask: ConversationAI = async (request) => {
     calls++;
-    return envelope(answer);
+    if (calls === 2) expect(request.prompt).toContain("1回目の回答");
+    return envelope({ ...answer, text: `${calls}回目の回答` });
   };
   await answerConversationQuestion(store, lesson, "teacher-0", "意味は？", "gemini-test", ask);
   await answerConversationQuestion(store, lesson, "teacher-0", " 意味は？ ", "gemini-test", ask);
-  expect(calls).toBe(1);
-  expect(readConversation(store, lesson.id)?.segments[0]?.questions).toHaveLength(1);
-  const saved = readConversation(store, lesson.id);
-  if (!saved) throw new Error("Missing conversation");
-  expect(canReuseAnswer(saved, "teacher-0", "意味は？")).toBe(true);
-  expect(canReuseAnswer(saved, "teacher-0", "意味は？", true)).toBe(false);
-  await answerConversationQuestion(store, lesson, "teacher-0", "もっと短く", "gemini-test", ask);
-  await answerConversationQuestion(store, lesson, "teacher-0", "意味は？", "gemini-test", ask);
-  expect(calls).toBe(3);
+  const questions = readConversation(store, lesson.id)?.segments[0]?.questions;
+  expect(calls).toBe(2);
+  expect(questions?.map((q) => q.question)).toEqual(["意味は？", "意味は？"]);
+  expect(questions?.map((q) => q.answer.text)).toEqual(["1回目の回答", "2回目の回答"]);
 });
 
 test("CLIの非ゼロ終了による利用上限でも残りの依頼を中止する", async () => {
