@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { AutomaticReviews } from "./automation";
 import type { Companion } from "./coach";
+import { readConversation } from "./conversation";
 import { safeError } from "./domain";
 import index from "./web/index.html";
 
@@ -109,6 +110,48 @@ export function serve(companion: Companion, port: number, automatic?: AutomaticR
           return Response.json({ queued: companion.enqueue(body.ids) }, { status: 202 });
         }
         const transcript = /^\/api\/lessons\/([\w-]+)\/transcript$/.exec(url.pathname);
+        const conversationRoute = /^\/api\/lessons\/([\w-]+)\/conversation(?:\/([\w-]+)\/questions)?$/.exec(
+          url.pathname,
+        );
+        if (conversationRoute?.[1]) {
+          const id = conversationRoute[1];
+          const segmentId = conversationRoute[2];
+          if (!store.library.lessons.some((l) => l.id === id))
+            return Response.json({ error: "レッスンが見つかりません。" }, { status: 404 });
+          if (request.method === "GET" && !segmentId)
+            return Response.json(
+              {
+                conversation: readConversation(store, id),
+                task: companion.conversationTask?.lessonId === id ? companion.conversationTask : undefined,
+              },
+              { headers: { "Cache-Control": "no-store" } },
+            );
+          if (request.method === "POST") {
+            if (companion.status.busy)
+              return Response.json({ error: "現在の処理が終わってから実行してください。" }, { status: 409 });
+            let question: { segmentId: string; text: string; wholeLesson?: boolean } | undefined;
+            if (segmentId) {
+              const body = (await request.json()) as { question?: unknown; wholeLesson?: unknown } | null;
+              if (
+                !body ||
+                typeof body.question !== "string" ||
+                !body.question.trim() ||
+                body.question.trim().length > 2000 ||
+                (body.wholeLesson !== undefined && typeof body.wholeLesson !== "boolean")
+              )
+                return Response.json({ error: "質問は1〜2,000文字で入力してください。" }, { status: 400 });
+              const conversation = readConversation(store, id);
+              if (!conversation)
+                return Response.json({ error: "先に会話ログを作成してください。" }, { status: 409 });
+              if (!conversation.segments.some((s) => s.id === segmentId))
+                return Response.json({ error: "発言が見つかりません。" }, { status: 404 });
+              question = { segmentId, text: body.question.trim(), wholeLesson: body.wholeLesson === true };
+            }
+            companion.startConversation(id, question);
+            return Response.json({ ok: true }, { status: 202 });
+          }
+          return new Response("Method not allowed", { status: 405 });
+        }
         if (transcript?.[1] && request.method === "GET") {
           const file = Bun.file(store.path("analyses", `${store.lesson(transcript[1]).id}.learner.json`));
           if (!(await file.exists()))

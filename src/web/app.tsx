@@ -4,6 +4,7 @@ import type { Lesson, Library } from "../domain";
 import { slackShareText } from "../share";
 import { clock, span, timedSegments } from "../timestamps";
 import { LessonAssessment } from "./assessment";
+import { LessonConversation } from "./conversation";
 import { Growth } from "./growth";
 import { LessonSpeaking } from "./speaking";
 import { NativeExamples } from "./youglish";
@@ -81,6 +82,7 @@ function App() {
   const [help, setHelp] = useState(false);
   const [copied, setCopied] = useState("");
   const [showLearned, setShowLearned] = useState(false);
+  const [lessonView, setLessonView] = useState<"reflection" | "conversation">("reflection");
   const audio = useRef<HTMLAudioElement>(null);
   const stopAt = useRef<number | null>(null);
   // One native-example player at a time: which card and which word.
@@ -566,7 +568,32 @@ function App() {
                         </audio>
                       </div>
                     )}
-                    {lesson.feedback ? (
+                    <fieldset className="lesson-view-switch" aria-label="レッスンの表示">
+                      <button
+                        type="button"
+                        aria-pressed={lessonView === "reflection"}
+                        onClick={() => setLessonView("reflection")}
+                      >
+                        振り返り
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={lessonView === "conversation"}
+                        onClick={() => setLessonView("conversation")}
+                      >
+                        会話と質問
+                      </button>
+                    </fieldset>
+                    {lessonView === "conversation" ? (
+                      <LessonConversation
+                        lessonId={lesson.id}
+                        teacher={lesson.teacher}
+                        available={lesson.attended && Boolean(lesson.audio || lesson.tracks.length)}
+                        busy={busy}
+                        request={api}
+                        play={play}
+                      />
+                    ) : lesson.feedback ? (
                       <>
                         {lesson.feedback.source === "audio_transcript" && (
                           <p className="analysis-basis">
