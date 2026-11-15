@@ -123,6 +123,7 @@ async function judge(utterance: Utterance, variant: Variant, anchors: Utterance[
     prompt,
     model: values.model ?? "",
     schema: { name: "speechocean762", shape: judgement },
+    readable: parts.flatMap((p) => ("audio" in p ? [p.audio] : [])),
     workDir,
     log: `${workDir}/logs/${utterance.id}.json`,
   });

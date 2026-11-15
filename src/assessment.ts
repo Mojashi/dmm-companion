@@ -64,6 +64,7 @@ ${descriptors}
     prompt,
     model,
     schema: { name: "assessment", shape: assessmentSchema },
+    readable: [store.path(lesson.audio.file)],
     workDir: store.path("work", lesson.id),
     log: store.path("analyses", `${lesson.id}-assessment-${Date.now()}.json`),
   });

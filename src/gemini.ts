@@ -67,12 +67,15 @@ export function jsonIn(text: string): unknown {
 
 /**
  * Asks Gemini (through agy) to answer in the given schema. The raw run is kept at `log` so a failed
- * or surprising answer can be inspected; `workDir` is agy's working directory.
+ * or surprising answer can be inspected; `workDir` is agy's working directory. `readable` are the files
+ * the model may open: Gemini 4 opens recordings with read_file, which headless agy denies unless each
+ * file is allowed by name.
  */
 export async function askGemini(request: {
   prompt: string;
   model: string;
   schema: { name: string; shape: z.ZodType };
+  readable: string[];
   workDir: string;
   log: string;
   attempts?: number;
@@ -95,6 +98,8 @@ export async function askGemini(request: {
         schemaPath,
         "--print-timeout",
         "15m",
+        "--settings",
+        JSON.stringify({ permissions: { allow: request.readable.map((file) => `read_file(${file})`) } }),
       ],
       { cwd: request.workDir, timeout: 16 * 60_000, log: request.log },
     );

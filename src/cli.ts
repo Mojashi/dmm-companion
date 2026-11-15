@@ -24,7 +24,7 @@ const { values, positionals } = parseArgs({
   options: {
     "data-dir": { type: "string" },
     port: { type: "string", default: "4317" },
-    model: { type: "string", default: "gemini-3.8-flash-high" },
+    model: { type: "string", default: "gemini-4-hydrogen-high" },
     "transcribe-model": { type: "string", default: "gemini-3.8-flash-low" },
     "question-model": { type: "string", default: "gemini-3.8-flash-low" },
     "no-open": { type: "boolean" },
@@ -59,7 +59,7 @@ if (values.help) {
 
   --data-dir PATH   保存先 (既定: ~/.dmm-companion)
   --port NUMBER     ローカルポート (既定: 4317)
-  --model NAME      振り返り・CEFR判定のGeminiモデル (既定: gemini-3.8-flash-high)
+  --model NAME      振り返り・CEFR判定のGeminiモデル (既定: gemini-4-hydrogen-high)
   --transcribe-model NAME  発話の書き起こしのGeminiモデル (既定: gemini-3.8-flash-low)
   --question-model NAME   会話への質問のGeminiモデル (既定: gemini-3.8-flash-low)
   --no-open        ページを自動で開かない

@@ -186,6 +186,7 @@ ${JSON.stringify(context)}`,
     model,
     attempts: 1,
     schema: { name: "conversation-answer", shape: answerSchema },
+    readable: [],
     workDir: store.path("work", lesson.id),
     log: store.path("analyses", `${lesson.id}-question-${Date.now()}.json`),
   });

@@ -160,6 +160,7 @@ ${JSON.stringify(inputs)}`,
           name: `conversation-${role.toLowerCase()}`,
           shape: pending.length === 1 ? transcriptSchema : batchSchema,
         },
+        readable: inputs.map((input) => input.file),
         workDir,
         log: store.path("analyses", `${lesson.id}-transcript-${role}-${Date.now()}.json`),
       });

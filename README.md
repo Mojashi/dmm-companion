@@ -99,7 +99,7 @@ dmm auto slack off   # Slack配信を停止する
 
 ## 必要なもの
 
-- `agy`: ログイン済みのCLI。振り返りとCEFR判定は`--model`（既定 `gemini-3.8-flash-high`）、発話の書き起こしは`--transcribe-model`（既定 `gemini-3.8-flash-low`）で実行します。
+- `agy`: ログイン済みのCLI。振り返りとCEFR判定は`--model`（既定 `gemini-4-hydrogen-high`）、発話の書き起こしは`--transcribe-model`（既定 `gemini-3.8-flash-low`）で実行します。
 - `ffmpeg` / `ffprobe`: 話者ごとに分かれた録音の復元と時刻合わせ。
 
 ```sh

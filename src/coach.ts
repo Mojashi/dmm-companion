@@ -61,6 +61,7 @@ export async function listenWithGemini(store: Store, lesson: Lesson, model: stri
     prompt,
     model,
     schema: { name: "feedback", shape: feedbackSchema },
+    readable: [store.path(lesson.audio.file)],
     workDir: store.path("work", lesson.id),
     log: store.path("analyses", `${lesson.id}-${Date.now()}.json`),
   });
