@@ -21,13 +21,24 @@ export function isQuotaError(error: unknown): boolean {
   return /individual quota|quota (?:reached|exhausted)|RESOURCE_EXHAUSTED.*quota/i.test(text);
 }
 
+type AgyEnvelope = { status?: string; response?: unknown; structured_output?: unknown; error?: unknown };
+
 /** Unwraps agy's --output-format json envelope into the model's JSON answer. */
 export function agyResponse(stdout: string): unknown {
-  const envelope = JSON.parse(stdout) as { status?: string; response?: unknown; error?: unknown };
-  if (envelope.status !== "SUCCESS" && isQuotaError(envelope.error)) throw new AiQuotaExceeded();
-  if (envelope.status !== "SUCCESS")
-    throw new Error("agyの音声分析が完了しませんでした。analysesの実行ログを確認してください。");
-  return typeof envelope.response === "string" ? jsonIn(envelope.response) : envelope.response;
+  const envelope = JSON.parse(stdout) as AgyEnvelope;
+  if (envelope.status === "SUCCESS")
+    return typeof envelope.response === "string" ? jsonIn(envelope.response) : envelope.response;
+  if (answered(envelope)) return envelope.structured_output;
+  if (isQuotaError(envelope.error)) throw new AiQuotaExceeded();
+  throw new Error("agyの音声分析が完了しませんでした。analysesの実行ログを確認してください。");
+}
+
+/**
+ * agy can end with an ERROR envelope ("The stream was interrupted") after the whole answer has already
+ * arrived and passed its --json-schema check; that answer is kept in structured_output.
+ */
+function answered(envelope: AgyEnvelope): boolean {
+  return typeof envelope.structured_output === "object" && envelope.structured_output !== null;
 }
 
 /**
@@ -91,9 +102,9 @@ export async function askGemini(request: {
   for (let attempt = 1; ; attempt++) {
     try {
       const stdout = await run();
-      if (isQuotaError(errorOf(stdout))) throw new AiQuotaExceeded();
+      if (isQuotaError(unansweredError(stdout))) throw new AiQuotaExceeded();
       // agy can also exit 0 with an ERROR envelope when the connection dropped mid-answer.
-      if (attempt < attempts && transient(errorOf(stdout))) {
+      if (attempt < attempts && transient(unansweredError(stdout))) {
         await Bun.sleep(attempt * 20_000);
         continue;
       }
@@ -113,14 +124,18 @@ export async function askGemini(request: {
 function transient(error: unknown): boolean {
   const text =
     error instanceof CommandError ? error.stderr + error.stdout : typeof error === "string" ? error : "";
-  return /network issue|dial tcp|invalid model selection|is not recognized as a known model/.test(text);
+  return /network issue|dial tcp|stream was interrupted|invalid model selection|is not recognized as a known model/.test(
+    text,
+  );
 }
 
-/** The error text of an agy ERROR envelope, if stdout is one. */
-function errorOf(stdout: string): string {
+/** The error text of an agy ERROR envelope that came without an answer, if stdout is one. */
+function unansweredError(stdout: string): string {
   try {
-    const envelope = JSON.parse(stdout) as { status?: string; error?: unknown };
-    return envelope.status === "ERROR" && typeof envelope.error === "string" ? envelope.error : "";
+    const envelope = JSON.parse(stdout) as AgyEnvelope;
+    return envelope.status === "ERROR" && !answered(envelope) && typeof envelope.error === "string"
+      ? envelope.error
+      : "";
   } catch {
     return "";
   }

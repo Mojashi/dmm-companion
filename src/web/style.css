@@ -1467,6 +1467,19 @@ footer {
   font-size: 10px;
   color: var(--accent);
 }
+.assessment-failed {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 28px 0 0;
+}
+.assessment-failed .speaking-error {
+  margin: 0;
+}
+.assessment-failed .outline-button {
+  padding: 7px 13px;
+}
 
 .assessment {
   margin: 28px 0 0;

@@ -18,3 +18,9 @@ test("利用上限はJSON応答とCLIエラーの両方を識別する", () => {
   expect(isQuotaError(new CommandError("agy", 3, "", "Individual quota reached."))).toBe(true);
   expect(isQuotaError("network issue")).toBe(false);
 });
+
+test("ストリーム中断のERRORでも、スキーマ検証済みの回答が届いていれば使う", () => {
+  const interrupted = { status: "ERROR", error: "The stream was interrupted.", response: '{"a":3}' };
+  expect(agyResponse(JSON.stringify({ ...interrupted, structured_output: { a: 3 } }))).toEqual({ a: 3 });
+  expect(() => agyResponse(JSON.stringify(interrupted))).toThrow("完了しませんでした");
+});

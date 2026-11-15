@@ -641,6 +641,8 @@ function App() {
                           assessment={lesson.assessment}
                           error={lesson.assessmentError}
                           timed={(text) => timed(lesson, text)}
+                          busy={busy}
+                          onRetry={() => void act(() => post("/api/assess", { ids: [lesson.id] }))}
                         />
                         <LessonSpeaking
                           metrics={lesson.metrics}

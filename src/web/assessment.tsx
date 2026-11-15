@@ -7,12 +7,24 @@ export function LessonAssessment({
   assessment,
   error,
   timed,
+  busy,
+  onRetry,
 }: {
   assessment?: Lesson["assessment"];
   error?: string;
   timed: (text: string) => ReactNode;
+  busy: boolean;
+  onRetry: () => void;
 }) {
-  if (!assessment) return error ? <p className="speaking-error">CEFRの判定に失敗しました: {error}</p> : null;
+  if (!assessment)
+    return error ? (
+      <div className="assessment-failed">
+        <p className="speaking-error">CEFRの判定に失敗しました: {error}</p>
+        <button type="button" className="outline-button" disabled={busy} onClick={onRetry}>
+          もう一度判定する ↻
+        </button>
+      </div>
+    ) : null;
   return (
     <section className="assessment">
       <span className="eyebrow">CEFR ESTIMATE</span>
